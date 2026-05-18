@@ -85,6 +85,12 @@ export interface TransformInfo {
   /** sha256[0..8] of the first user message text (first 4 KiB). Rough
    *  thread/session id since the wire protocol carries none. */
   firstUserSha8?: string;
+  /** Raw bytes of the FIRST rendered image. Used by the in-process dashboard
+   *  to show a preview. NOT persisted to JSONL (toTrackEvent drops it). */
+  firstImagePng?: Uint8Array;
+  /** Pixel dimensions of the first image. */
+  firstImageWidth?: number;
+  firstImageHeight?: number;
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -417,6 +423,14 @@ export async function transformRequest(
     imageBlocks.push(makeImageBlock(b64, i === images.length - 1));
   }
   info.imageCount = imageBlocks.length;
+  // Stash the first image's raw bytes + dimensions for the dashboard preview.
+  // Stripped before persisting to JSONL by toTrackEvent. Memory cost is bounded
+  // (we only ever keep ONE — the latest — via the dashboard's replace-on-update).
+  if (images.length > 0) {
+    info.firstImagePng = images[0]!.png;
+    info.firstImageWidth = images[0]!.width;
+    info.firstImageHeight = images[0]!.height;
+  }
 
   // 4. Splice images back into the request.
   // Cache-friendly layout:

@@ -41,7 +41,7 @@ export default {
       compressTools: truthy(env.COMPRESS_TOOLS, true),
       compressSchemas: truthy(env.COMPRESS_SCHEMAS, true),
       minCompressChars: env.MIN_COMPRESS_CHARS ? Number(env.MIN_COMPRESS_CHARS) : 2000,
-      placement: (env.PLACEMENT as 'system' | 'user') ?? 'system',
+      placement: (env.PLACEMENT as 'system' | 'user') ?? 'user',
       cols: env.COLS ? Number(env.COLS) : 100,
     };
     const trackingOn = truthy(env.PIXELPIPE_TRACK, true);

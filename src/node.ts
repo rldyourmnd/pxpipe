@@ -13,6 +13,7 @@ import * as os from 'node:os';
 import { createProxy, type ProxyConfig } from './core/proxy.js';
 import type { TransformOptions } from './core/transform.js';
 import { toTrackEvent, noopTracker, type Tracker, type TrackEvent } from './core/tracker.js';
+import { DashboardState, dashboardPath } from './dashboard.js';
 
 interface CliOpts {
   port: number;
@@ -43,7 +44,7 @@ function parseCli(argv: string[]): CliOpts {
     compressTools: envFlag('COMPRESS_TOOLS', true),
     compressSchemas: envFlag('COMPRESS_SCHEMAS', true),
     minCompressChars: Number(process.env.MIN_COMPRESS_CHARS ?? 2000),
-    placement: (process.env.PLACEMENT as 'system' | 'user') ?? 'system',
+    placement: (process.env.PLACEMENT as 'system' | 'user') ?? 'user',
     cols: Number(process.env.COLS ?? 100),
     track: envFlag('PIXELPIPE_TRACK', true),
     eventsFile:
@@ -92,7 +93,8 @@ Options:
       --no-tools          don't fold tool docs into the image
       --no-schemas        don't include input_schema JSON in the image
       --min-chars <N>     skip compression below this many chars (default 2000)
-      --placement <where> 'system' or 'user' (default system)
+      --placement <where> 'system' or 'user' (default user; 'system' is
+                          rejected by the API for image blocks)
       --cols <N>          soft-wrap column count (default 100)
       --no-track          disable persistent event tracking
       --events-file <P>   JSONL events path (default ~/.pixelpipe/events.jsonl)
@@ -309,10 +311,20 @@ async function main(): Promise<void> {
   };
   const tracker: Tracker = opts.track ? new FileTracker(opts.eventsFile) : noopTracker;
 
+  // Live dashboard state — populated on every request via onRequest below,
+  // served via the route interception in front of the proxy handler.
+  const dashboard = new DashboardState();
+  // Seed the "recent requests" table from the JSONL log so a process restart
+  // doesn't reset what you can see in the UI. Best-effort; ignored on error.
+  await dashboard.replay(opts.eventsFile).catch(() => {});
+
   const config: ProxyConfig = {
     upstream: opts.upstream,
     transform,
     onRequest: (e) => {
+      // Feed the dashboard BEFORE tracker.emit — toTrackEvent strips
+      // info.firstImagePng, so capturing has to happen on the raw event.
+      dashboard.update(e);
       // Terse human-readable console line.
       const tag = e.info?.compressed
         ? `compressed ${e.info.origChars}ch → ${e.info.imageCount}img/${e.info.imageBytes}B`
@@ -345,6 +357,24 @@ async function main(): Promise<void> {
   const server = createServer((req, res) => {
     Promise.resolve()
       .then(async () => {
+        // Local dashboard routes — handled BEFORE the proxy so they never hit
+        // api.anthropic.com (which would 404 them).
+        if (req.method === 'GET') {
+          const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+          const kind = dashboardPath(url.pathname);
+          if (kind) {
+            const webRes =
+              kind === 'html'
+                ? dashboard.serveHtml(opts.port)
+                : kind === 'stats'
+                  ? dashboard.serveStats()
+                  : kind === 'recent'
+                    ? dashboard.serveRecent()
+                    : dashboard.servePng();
+            await writeWebResponse(webRes, res);
+            return;
+          }
+        }
         const webReq = toWebRequest(req);
         const webRes = await handle(webReq);
         await writeWebResponse(webRes, res);
@@ -363,6 +393,7 @@ async function main(): Promise<void> {
     );
     if (opts.track) console.log(`[pixelpipe] tracking events → ${opts.eventsFile}`);
     else console.log('[pixelpipe] tracking disabled (--no-track or PIXELPIPE_TRACK=0)');
+    console.log(`[pixelpipe] dashboard → http://127.0.0.1:${opts.port}/`);
   });
 
   const shutdown = (sig: string) => {
