@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { renderChunkToPng, renderTextToPngs } from '../src/core/render.js';
+import {
+  renderChunkToPng,
+  renderTextToPngs,
+  expandTabsInLine,
+} from '../src/core/render.js';
 import { encodeGrayPng, bytesToBase64 } from '../src/core/png.js';
 import { transformRequest } from '../src/core/transform.js';
 import { atlasRank, ATLAS_CELL_H } from '../src/core/atlas.js';
@@ -206,20 +210,69 @@ describe('renderer', () => {
 
   // --- Tab expansion (production bug fix) -----------------------------------
   // Real telemetry on 2026-05-19 showed 5,339 of 5,358 drops (99.6%) were
-  // U+0009 TAB. Tabs are control codepoints, not glyphs — they should expand
-  // to spaces at 4-stop alignment, not register as dropped chars.
+  // U+0009 TAB. Tabs are control codepoints, not glyphs — they expand to
+  // a visible `→` (U+2192) at the tab boundary + padding spaces to the next
+  // 4-stop. The visible arrow preserves "this was an indent" structure for
+  // the OCR'd model; silent spaces would lose that signal.
 
-  it('expands tabs to 4-space tab stops (basic)', async () => {
-    // `a\tb` at col 1, tab fills col 1→col 4 (3 spaces), so we get `a   b`.
+  it('expandTabsInLine: basic — a\\tb → a→<2sp>b (col 1 → col 4, span=3)', () => {
+    expect(expandTabsInLine('a\tb')).toBe('a→  b');
+  });
+
+  it('expandTabsInLine: leading tab — \\tx → →<3sp>x (col 0 → col 4, span=4)', () => {
+    expect(expandTabsInLine('\tx')).toBe('→   x');
+  });
+
+  it('expandTabsInLine: ab\\tc → ab→<1sp>c (col 2 → col 4, span=2)', () => {
+    expect(expandTabsInLine('ab\tc')).toBe('ab→ c');
+  });
+
+  it('expandTabsInLine: abc\\tx → abc→x (col 3 → col 4, span=1, no padding)', () => {
+    // NOTE: the team-lead brief showed `abc→   x` here, but the brief's own
+    // formula `tabWidth - (col % tabWidth)` gives span=1 at col=3 — single
+    // arrow, zero padding. Implementing per the formula (consistent across
+    // all other cases); flagging the brief example as a typo.
+    expect(expandTabsInLine('abc\tx')).toBe('abc→x');
+  });
+
+  it('expandTabsInLine: no tabs → unchanged (fast path)', () => {
+    expect(expandTabsInLine('a\nb')).toBe('a\nb');
+    expect(expandTabsInLine('hello world')).toBe('hello world');
+  });
+
+  it('expandTabsInLine: tab after CJK uses visual width (中 = 2 cols)', () => {
+    // 中 at cols 0-1, tab at col 2 → span = 4 - 2 = 2 (arrow + 1 space).
+    expect(expandTabsInLine('中\tx')).toBe('中→ x');
+  });
+
+  it('renders tab-containing text with droppedChars: 0 (was dropping pre-fix)', async () => {
     const img = await renderChunkToPng('a\tb');
     expect(img.droppedChars).toBe(0);
     expect(img.droppedCodepoints.size).toBe(0);
   });
 
-  it('leading tab expands to 4 spaces', async () => {
-    // `\tx` at col 0, tab fills col 0→col 4 (4 spaces), so we get `    x`.
+  it('renders leading tab with droppedChars: 0', async () => {
     const img = await renderChunkToPng('\tx');
     expect(img.droppedChars).toBe(0);
+  });
+
+  it('full pipeline: foo\\n\\tbar renders to two lines with visible → in the indent', async () => {
+    // Brief's specific E2E ask. `foo\n\tbar` is two logical lines:
+    //   line 0: "foo"
+    //   line 1: "\tbar" → expands to "→   bar"
+    // Both lines render cleanly with no drops; arrow U+2192 is in the Arrows
+    // block (covered by every profile).
+    const img = await renderChunkToPng('foo\n\tbar');
+    expect(img.droppedChars).toBe(0);
+    expect(img.droppedCodepoints.size).toBe(0);
+    // Two visible lines = 2 cell-rows of pixels (height check).
+    const expectedHeight = 2 * 4 /* PAD_Y */ + 2 * ATLAS_CELL_H;
+    expect(img.height).toBe(expectedHeight);
+    // Sanity: charsRendered counts input codepoints (4 + 1 + 4 = 9 chars
+    // including the embedded `\n`). The arrow + padding spaces aren't in
+    // the input — they're created post-`\n`-split — so `charsRendered`
+    // still reflects the original input length.
+    expect(img.charsRendered).toBe('foo\n\tbar'.length);
   });
 
   it('multiple tabs land on their respective tab stops', async () => {
