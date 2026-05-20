@@ -111,17 +111,16 @@ the text actually costs more tokens than the image will. At the textbook
 
 ### Step 3 — tokens → $
 
-Rates from [Anthropic's pricing page](https://www.anthropic.com/pricing).
-Image tokens are billed at the input rate. Input price has been flat
-across Opus 4.5/4.6/4.7 — the proxy's value scales with input volume, not
-model version.
+Rates from [Anthropic's pricing page](https://www.anthropic.com/pricing)
+for Opus 4.7 (input pricing has been flat across 4.5/4.6/4.7). Image
+tokens are billed at the input rate.
 
-| line item            | rate (Opus 4)  | rate (Opus 4.5+) |
-| -------------------- | -------------- | ---------------- |
-| input                | $15.00 / MTok  | $5.00 / MTok     |
-| output               | $75.00 / MTok  | $25.00 / MTok    |
-| cache_create (5 min) | $18.75 / MTok  | $6.25 / MTok     |
-| cache_read           | $ 1.50 / MTok  | $0.50 / MTok     |
+| line item            | rate          |
+| -------------------- | ------------- |
+| input                | $5.00 / MTok  |
+| output               | $25.00 / MTok |
+| cache_create (5 min) | $6.25 / MTok  |
+| cache_read           | $0.50 / MTok  |
 
 ### Worked example — one real cold-miss event
 
