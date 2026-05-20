@@ -1846,6 +1846,60 @@ describe('transform', () => {
     expect(live.info.imageCount ?? 0).toBeGreaterThan(0);
   });
 
+  // --- Slab-specific cpt: built-in 2.5 cpt unlocks production-shape slabs ---
+  //
+  // Empirical: N=354 production count_tokens probes (2026-05-18..2026-05-20)
+  // give body-level chars/token median 1.17, max 2.62. The English-prose
+  // CHARS_PER_TOKEN=4 default was 3.4× too high for the slab call site,
+  // silently rejecting every realistic slab. The slab gate now uses
+  // SLAB_CHARS_PER_TOKEN=2.5 — the upper bound of empirical data — which
+  // unlocks the production-shape slab while preserving the prime-directive
+  // safety (no net-loss compressions on shapes we've actually observed).
+
+  it('transformRequest: production-shape 161k slab compresses without an explicit cpt override', async () => {
+    // Build a dense ~161k-char slab matching the production passthrough event
+    // (orig_chars=161101). 60-100 char lines, modest blank density —
+    // representative of system + tool-doc slab shape under multi-col=2.
+    const parts: string[] = [];
+    let acc = 0;
+    const target = 161_101;
+    while (acc < target) {
+      const len = 60 + (acc % 40);
+      parts.push('A'.repeat(len) + (acc % 200 === 0 ? '   ' : ''));
+      acc += len + 1;
+    }
+    const slab = parts.join('\n').slice(0, target);
+    const req = JSON.stringify({
+      model: 'claude-3-5-sonnet',
+      messages: [{ role: 'user', content: 'hi' }],
+      system: slab,
+    });
+    const bytes = new TextEncoder().encode(req);
+
+    // No host-supplied cpt: built-in SLAB_CHARS_PER_TOKEN flips this to ACCEPT
+    // at multi-col=2 (production default). This is the regression guard for
+    // the 2026-05-20 zero-compression production bug.
+    const out = await transformRequest(bytes, { multiCol: 2 });
+    expect(out.info.compressed).toBe(true);
+    expect(out.info.imageCount ?? 0).toBeGreaterThan(0);
+  });
+
+  it('isCompressionProfitable: slab cpt=2.5 flips a 161k production-shape slab profitable at multi-col=2', () => {
+    // Pin the math directly. Image cost at multi-col=2: 8 imgs × 5500 =
+    // 44,000 tok. At cpt=4, text=40,275 → REJECT. At cpt=2.5, text=64,440
+    // → ACCEPT with 20k headroom over the conservative slab cpt.
+    const parts: string[] = [];
+    let acc = 0;
+    while (acc < 161_101) {
+      const len = 60 + (acc % 40);
+      parts.push('A'.repeat(len));
+      acc += len + 1;
+    }
+    const slab = parts.join('\n').slice(0, 161_101);
+    expect(isCompressionProfitable(slab, 100, undefined, 2, 4)).toBe(false);
+    expect(isCompressionProfitable(slab, 100, undefined, 2, 2.5)).toBe(true);
+  });
+
   // --- Adaptive break-even: CHARS_PER_IMAGE derived from atlas cell, not hardcoded ---
   // Brief: when font-rater swaps to a smaller cell (e.g. Cozette 4×7), more chars
   // pack into one image, so the N-image break-even thresholds shift. Tests below

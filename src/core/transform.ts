@@ -151,6 +151,32 @@ const DEFAULTS: Required<TransformOptions> = {
  *  mix; tool_result content is typically code-shaped. */
 const CHARS_PER_TOKEN = 4;
 
+/** Empirical chars-per-token for the *system slab + tool docs* path.
+ *
+ *  Source: N=354 production cold-miss `count_tokens` baselines on
+ *  Claude Code (pixelpipe events.jsonl, 2026-05-18 → 2026-05-20):
+ *    body cpt distribution — median 1.17, p95 2.5, MAX 2.62.
+ *
+ *  System slabs are JSON-dense (tool definitions, schemas, structured
+ *  prompts) so they sit at cpt ~1.2, NOT the English-prose 4. Using cpt=4
+ *  for this call site told the gate text was 3.4× cheaper than reality,
+ *  silently rejecting every profitable slab compression we've seen since
+ *  the row-aware gate landed.
+ *
+ *  Safety: 2.5 is the **upper bound** of observed real cpts (max=2.62
+ *  with one sample, p95=2.5). Picking the upper bound keeps the prime-
+ *  directive guarantee intact — the text-token estimate is a LOWER bound
+ *  on real text cost, so any `imageCost < textTokens` decision is also
+ *  `imageCost < realTextCost`. If a slab in the wild ever lands above
+ *  cpt=2.5, the gate would still under-bill text by < 5% and the worst
+ *  case is a marginal-loss compression, not a runaway.
+ *
+ *  Why this is slab-specific and NOT a global default: reminders and
+ *  tool_result content have unknown shape (could be raw English prose
+ *  with cpt~4). Leaving those at CHARS_PER_TOKEN=4 preserves the
+ *  conservative bias where shape isn't known a priori. */
+const SLAB_CHARS_PER_TOKEN = 2.5;
+
 /** Empirical per-image cost at numCols=1. Source: dashboard.ts measurement
  *  trace. Kept here as a constant rather than imported from dashboard.ts
  *  to keep `src/core/` free of dashboard imports — that's a one-way edge. */
@@ -1343,7 +1369,15 @@ export async function transformRequest(
     Math.max(1, (o.multiCol | 0) || 1),
     Math.max(1, maxFittingCols(o.cols)),
   );
-  if (!isCompressionProfitable(combined, o.cols, undefined, numCols, o.charsPerToken)) {
+  // Slab cpt is empirically ~1.2 (N=354 production samples) — far from the
+  // English-prose default 4 baked into CHARS_PER_TOKEN. Use a slab-specific
+  // upper-bound cpt at this gate so JSON-dense system + tool-doc content
+  // gets a fair break-even check. Host can still override via
+  // `o.charsPerToken` (e.g., to plug in a live empirical fit).
+  const slabCpt = o.charsPerToken !== undefined && o.charsPerToken !== CHARS_PER_TOKEN
+    ? o.charsPerToken
+    : SLAB_CHARS_PER_TOKEN;
+  if (!isCompressionProfitable(combined, o.cols, undefined, numCols, slabCpt)) {
     info.reason = `not_profitable (slab=${combined.length} chars)`;
     bumpPassthrough(info, 'not_profitable');
     info.outgoingTextChars = countOutgoingTextChars(req);
