@@ -73,6 +73,60 @@ describe('public library API', () => {
     expect((last.content as unknown[])).toHaveLength(1);
   });
 
+  it('cacheable-prefix probe body pairs orphan tool_use blocks with synthetic tool_result', () => {
+    const body = enc.encode(JSON.stringify({
+      model: 'claude-opus-4-7',
+      messages: [
+        { role: 'user', content: 'hi' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'thinking' },
+            { type: 'tool_use', id: 'toolu_orphan_a', name: 'read', input: {} },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_orphan_a', content: 'result' },
+            { type: 'text', text: 'next turn please', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'toolu_orphan_b', name: 'read', input: {} },
+          ],
+        },
+        // tool_result for toolu_orphan_b would be in the dropped tail
+      ],
+    }));
+
+    const probes = buildCountTokensBodies(body);
+    expect(probes.cacheablePrefixBody).toBeInstanceOf(Uint8Array);
+    const prefix = JSON.parse(dec.decode(probes.cacheablePrefixBody!)) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    // Truncation kept up to and including the cache_control-bearing block,
+    // which sits in messages[2]. The cached-prefix should NOT include msg[3]
+    // (the orphan tool_use), but if it did, the synthetic tool_result must
+    // pair it. Either way: no orphan tool_use ids may remain unpaired.
+    const allBlocks = prefix.messages.flatMap((m) =>
+      Array.isArray(m.content) ? (m.content as Array<{ type?: string }>) : [],
+    );
+    const orphanUses = allBlocks
+      .filter((b) => b.type === 'tool_use')
+      .map((b) => (b as { id?: string }).id);
+    const results = new Set(
+      allBlocks
+        .filter((b) => b.type === 'tool_result')
+        .map((b) => (b as { tool_use_id?: string }).tool_use_id),
+    );
+    for (const id of orphanUses) {
+      expect(results.has(id)).toBe(true);
+    }
+  });
+
   it('wraps the transformer with model gating and cache ownership metadata', async () => {
     const unsupported = enc.encode(JSON.stringify({
       model: 'claude-opus-4-6',

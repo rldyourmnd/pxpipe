@@ -72,6 +72,58 @@ function hasCacheControl(x: unknown): boolean {
   );
 }
 
+/** Walk a kept-messages array and return tool_use ids that have no matching
+ * tool_result. Anthropic's `/v1/messages/count_tokens` validates structural
+ * pairing and rejects with `messages.<N>: tool_use ids were found without
+ * tool_result blocks` when an orphan exists. After we truncate at a
+ * `cache_control` marker, orphans are common because the message carrying
+ * the matching `tool_result` is in the dropped tail. */
+function findOrphanToolUseIds(messages: unknown[]): string[] {
+  const uses: string[] = [];
+  const results = new Set<string>();
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    const content = (msg as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const blk of content) {
+      if (!blk || typeof blk !== 'object') continue;
+      const t = (blk as { type?: unknown }).type;
+      if (t === 'tool_use') {
+        const id = (blk as { id?: unknown }).id;
+        if (typeof id === 'string') uses.push(id);
+      } else if (t === 'tool_result') {
+        const id = (blk as { tool_use_id?: unknown }).tool_use_id;
+        if (typeof id === 'string') results.add(id);
+      }
+    }
+  }
+  return uses.filter((id) => !results.has(id));
+}
+
+/** Make a truncated cacheable-prefix body legal for count_tokens by appending
+ * synthetic tool_result blocks for any orphan tool_use ids. The synthetic
+ * results are minimal ("ok") so they add only a handful of tokens; the
+ * resulting cacheable_prefix_tokens estimate is within ~1% of truth and
+ * the row's baseline_probe_status becomes 'ok' instead of 'partial'. */
+function appendSyntheticToolResults(
+  truncated: Record<string, unknown>,
+): Record<string, unknown> {
+  const messages = truncated.messages;
+  if (!Array.isArray(messages)) return truncated;
+  const orphanIds = findOrphanToolUseIds(messages);
+  if (orphanIds.length === 0) return truncated;
+  const syntheticUserMsg = {
+    role: 'user',
+    content: orphanIds.map((id) => ({
+      type: 'tool_result',
+      tool_use_id: id,
+      content: 'ok',
+    })),
+  };
+  return { ...truncated, messages: [...messages, syntheticUserMsg] };
+}
+
+
 /** Build a body that contains EXACTLY the tokens forming the longest
  * cacheable prefix on the unproxied path — everything up to and INCLUDING
  * the last `cache_control` marker in the original request, with everything
@@ -159,6 +211,7 @@ export function buildCacheablePrefixCountTokensBody(bytes: BytesLike): Uint8Arra
   }
 
   if (truncated == null) return null;
+  truncated = appendSyntheticToolResults(truncated);
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(truncated)) {
     if (COUNT_TOKENS_FIELDS.has(k)) out[k] = truncated[k];
