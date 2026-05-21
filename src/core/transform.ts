@@ -1283,6 +1283,65 @@ function approxBlockBytes(blk: ImageBlock): number {
 
 // --- main transform --------------------------------------------------------
 
+
+/**
+ * Run history-image compression on `req.messages` and finalize the
+ * outgoing body. Called from BOTH the main success path AND the
+ * early-exit paths (below_min_chars, not_profitable slab) so message
+ * history is collapsed regardless of whether the static slab compresses.
+ *
+ * Real Codex traffic has tiny system slabs but huge `messages[]`. Without
+ * this, history collapse never runs on real production requests — the
+ * early-exits fire first and return the original bytes.
+ *
+ * The fn is intentionally tolerant to a missing or short messages array
+ * (collapseHistory itself short-circuits with reason='no_history' /
+ * 'prefix_too_short') so it's always safe to call.
+ */
+async function runHistoryCollapseAndFinalize(
+  req: MessagesRequest,
+  info: TransformInfo,
+  o: Required<TransformOptions>,
+  opts: TransformOptions,
+  droppedCodepoints: Map<number, number>,
+): Promise<{ body: Uint8Array; info: TransformInfo; collapsed: boolean }> {
+  let collapsedFlag = false;
+  if (Array.isArray(req.messages) && req.messages.length > 0) {
+    const historyCpt = opts.charsPerToken !== undefined
+      ? o.charsPerToken
+      : HISTORY_CHARS_PER_TOKEN;
+    const historyProfitable = (text: string, cols: number): boolean =>
+      isCompressionProfitable(text, cols, undefined, 1, historyCpt);
+    const { messages: newMessages, info: histInfo } = await collapseHistory(
+      req.messages,
+      historyProfitable,
+      { cols: o.cols },
+    );
+    if (histInfo.collapsedTurns > 0) {
+      req.messages = newMessages;
+      info.collapsedTurns = histInfo.collapsedTurns;
+      info.collapsedChars = histInfo.collapsedChars;
+      info.collapsedImages = histInfo.collapsedImages;
+      info.imageCount += histInfo.collapsedImages;
+      info.imageBytes += histInfo.collapsedImageBytes;
+      info.imagePixels = (info.imagePixels ?? 0) + histInfo.collapsedImagePixels;
+      info.droppedChars = (info.droppedChars ?? 0) + histInfo.droppedChars;
+      for (const [cp, n] of histInfo.droppedCodepoints) {
+        droppedCodepoints.set(cp, (droppedCodepoints.get(cp) ?? 0) + n);
+      }
+      info.historyReason = 'collapsed';
+      info.historyTextChars = histInfo.collapsedChars;
+      bumpBucket(info, 'history', histInfo.collapsedChars);
+      collapsedFlag = true;
+    } else if (histInfo.reason) {
+      info.historyReason = histInfo.reason;
+    }
+  }
+  info.outgoingTextChars = countOutgoingTextChars(req);
+  const outBody = new TextEncoder().encode(JSON.stringify(req));
+  return { body: outBody, info, collapsed: collapsedFlag };
+}
+
 /**
  * Rewrite a Messages API request body. Returns the new body (still JSON
  * bytes) plus diagnostic info. On any error, returns the original bytes
@@ -1436,9 +1495,17 @@ export async function transformRequest(
 
   if (combined.length < o.minCompressChars) {
     info.reason = `below_min_chars (${combined.length} < ${o.minCompressChars})`;
-    // Even on no-compress exits we want the regression denominator —
-    // otherwise α gets biased toward "requests big enough to compress".
-    info.outgoingTextChars = countOutgoingTextChars(req);
+    // Even with a static slab below the gate, message history may still be
+    // collapsable. Run history collapse on the in-memory request so
+    // production Codex traffic (tiny system, huge messages) still benefits.
+    // If history collapses, we flip `info.compressed = true` and let the
+    // library wrapper return reason='applied'; otherwise this still
+    // populates `outgoingTextChars` for the regression denominator.
+    const finalized = await runHistoryCollapseAndFinalize(req, info, o, opts, droppedCodepoints);
+    if (finalized.collapsed) {
+      info.compressed = true;
+      return { body: finalized.body, info };
+    }
     return { body, info };
   }
 
@@ -1469,7 +1536,14 @@ export async function transformRequest(
   if (!isCompressionProfitable(combined, o.cols, undefined, numCols, slabCpt)) {
     info.reason = `not_profitable (slab=${combined.length} chars)`;
     bumpPassthrough(info, 'not_profitable');
-    info.outgoingTextChars = countOutgoingTextChars(req);
+    // Slab failed the break-even gate, but message history may still be
+    // collapsable. Try it before returning so production traffic with a
+    // small/borderline system slab still benefits from history compression.
+    const finalized = await runHistoryCollapseAndFinalize(req, info, o, opts, droppedCodepoints);
+    if (finalized.collapsed) {
+      info.compressed = true;
+      return { body: finalized.body, info };
+    }
     return { body, info };
   }
 
