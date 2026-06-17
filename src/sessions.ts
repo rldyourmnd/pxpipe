@@ -165,11 +165,12 @@ export async function aggregateSessions(
     // Cling to whichever cwd we saw first; sessions that hop directories are
     // rare and the first cwd is the most stable identifier.
     if (s.project === undefined && ev.cwd) s.project = ev.cwd;
-    // Real per-session savings, cache-aware. See src/core/baseline.ts for
-    // the full derivation and the May-2026 regression that motivated the
-    // rewrite — the previous formula collapsed every warm turn's unproxied
-    // counterfactual to 100% cache_read × 0.10 and flipped the headline
-    // negative whenever the proxied path paid real cache_create.
+    // Real per-session savings, cache-aware and warmth-free. See
+    // src/core/baseline.ts for the full derivation: the cached prefix cancels
+    // (paid identically on both paths), so we credit only the net-new uncached
+    // text pxpipe compressed away — honest `baselineEff − actualEff`, NO >=0
+    // floor, so a net-losing turn (cc-heavy rewrite) lowers the total. This is
+    // deterministic — no per-session warmth state — so live and replay agree.
     // Events missing either probe stay out of the rollup — no estimation.
     const inp = ev.input_tokens ?? 0;
     const cc = ev.cache_create_tokens ?? 0;
@@ -181,12 +182,8 @@ export async function aggregateSessions(
       baseline > 0 &&
       haveUsage
     ) {
-      const baselineEff = computeBaselineInputEff(
-        baseline,
-        ev.baseline_cacheable_tokens ?? 0,
-        cc,
-        cr,
-      );
+      const cacheable = ev.baseline_cacheable_tokens ?? 0;
+      const baselineEff = computeBaselineInputEff(baseline, cacheable, inp, cc, cr);
       const actualEff = computeActualInputEff(inp, cc, cr);
       const tokensSaved = baselineEff - actualEff;
       s.tokensSavedEst += Math.round(tokensSaved);

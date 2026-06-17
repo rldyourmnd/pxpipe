@@ -129,76 +129,83 @@ describe('aggregateSessions', () => {
     expect(sessions.get('aaaaaaaa')?.requestCount).toBe(2);
   });
 
-  it('accumulates tokens saved from baseline_tokens vs upstream usage (allows negative)', async () => {
+  it('credits the real prefix compression (image prefix fewer tokens than text prefix)', async () => {
     writeEvents(tmp, [
-      // baseline 20000, actual_input_eff = 1000 + 800*1.25 + 100*0.10 = 2010
-      //   saved = 20000 − 2010 = 17990
+      // Text counterfactual: cacheable prefix 18000 read warm @0.1 + cold tail 2000
+      //   = 1800 + 2000 = 3800. actual = 1000 + 800*1.25 + 100*0.1 = 2010.
+      //   pp's cr (100) is far fewer than the text prefix (18000) -> saved 1790.
       ev({
         first_user_sha8: 'aaaaaaaa',
         compressed: true,
         baseline_tokens: 20_000,
+        baseline_cacheable_tokens: 18_000,
         input_tokens: 1_000,
         cache_create_tokens: 800,
         cache_read_tokens: 100,
       }),
-      // baseline 2000, actual_input_eff = 3000 + 0 + 0 = 3000 → NET LOSS −1000
-      // (must NOT be clamped to zero)
+      // Whole body cacheable: baseline = 9000*0.1 = 900. actual = 5 + 8000*0.1 = 805.
+      //   pp's image prefix (cr 8000) < text prefix (9000) -> saved 95.
       ev({
         first_user_sha8: 'aaaaaaaa',
         compressed: true,
-        baseline_tokens: 2_000,
-        input_tokens: 3_000,
-        cache_create_tokens: 0,
-        cache_read_tokens: 0,
+        baseline_tokens: 9_000,
+        baseline_cacheable_tokens: 9_000,
+        input_tokens: 5,
+        cache_read_tokens: 8_000,
       }),
-      // Missing baseline — skipped from savings rollup, still counts toward requests.
+      // Probe miss (no cacheable marker): we cannot split prefix from tail, so
+      // we credit NOTHING — the regression guard for the old cacheable=0 →
+      // cold_tail=baseline fabrication (would have falsely "saved" ~46000 here).
+      ev({
+        first_user_sha8: 'aaaaaaaa',
+        compressed: true,
+        baseline_tokens: 50_000,
+        input_tokens: 6,
+        cache_read_tokens: 40_000,
+      }),
+      // Missing baseline — skipped from savings, still counts toward requests.
       ev({
         first_user_sha8: 'aaaaaaaa',
         compressed: false,
         input_tokens: 500,
       }),
-      // Has baseline but no usage block — also skipped (apples-to-apples).
-      ev({
-        first_user_sha8: 'aaaaaaaa',
-        compressed: true,
-        baseline_tokens: 9_999,
-      }),
     ]);
     const { sessions } = await aggregateSessions(tmp);
     const s = sessions.get('aaaaaaaa')!;
-    // 17990 + (−1000) = 16990
-    expect(s.tokensSavedEst).toBe(16_990);
-    expect(s.charsSaved).toBe(16_990 * 4);
+    // 1790 + 95 + 0 = 1885
+    expect(s.tokensSavedEst).toBe(1_885);
+    expect(s.charsSaved).toBe(1_885 * 4);
     expect(s.requestCount).toBe(4);
   });
 
-  it('reports negative tokensSavedEst when all events net-lose', async () => {
+  it('reports a real NEGATIVE when cache_create overhead exceeds the prefix saving; probe-miss credits 0', async () => {
     writeEvents(tmp, [
-      // Each event: baseline=1000, actual=2000 → −1000
+      // Probe miss: no marker -> credit nothing (was a ~95000-token fabrication
+      // under the old formula). saved 0.
       ev({
         first_user_sha8: 'bbbbbbbb',
         compressed: true,
-        baseline_tokens: 1_000,
-        input_tokens: 2_000,
+        baseline_tokens: 100_000,
+        input_tokens: 5,
+        cache_read_tokens: 90_000,
       }),
+      // Genuine loss turn: tiny body (2000) but pp wrote 5000 cache_create.
+      //   baseline = 1900*0.1 + 100 = 290 ; actual = 3000 + 5000*1.25 = 9250.
+      //   saved = 290 - 9250 = -8960. Honest formula reports the real loss, no clamp.
       ev({
         first_user_sha8: 'bbbbbbbb',
         compressed: true,
-        baseline_tokens: 1_000,
-        input_tokens: 2_000,
-      }),
-      ev({
-        first_user_sha8: 'bbbbbbbb',
-        compressed: true,
-        baseline_tokens: 1_000,
-        input_tokens: 2_000,
+        baseline_tokens: 2_000,
+        baseline_cacheable_tokens: 1_900,
+        input_tokens: 3_000,
+        cache_create_tokens: 5_000,
       }),
     ]);
     const { sessions } = await aggregateSessions(tmp);
     const s = sessions.get('bbbbbbbb')!;
-    // 3 × −1000 = −3000
-    expect(s.tokensSavedEst).toBe(-3_000);
-    expect(s.charsSaved).toBe(-12_000);
+    // 0 + (-8960)
+    expect(s.tokensSavedEst).toBe(-8_960);
+    expect(s.charsSaved).toBe(-8_960 * 4);
   });
 });
 
