@@ -259,6 +259,28 @@ async function dispatchDashboard(
         dashboard.handleCompressionToggle({ enabled });
         return dashboard.serveFragment('toggle', url, port);
       }
+      // /fragments/models POSTs one chip flip: {model, on}. Server mutates the
+      // runtime compress scope and returns the re-rendered chip row.
+      if (route.name === 'models' && method === 'POST') {
+        let model = '';
+        let on = false;
+        try {
+          const raw = await readRequestBody(req);
+          try {
+            const j = JSON.parse(raw) as { model?: unknown; on?: unknown };
+            model = typeof j.model === 'string' ? j.model : '';
+            on = j.on === true;
+          } catch {
+            const p = new URLSearchParams(raw);
+            model = p.get('model') ?? '';
+            on = p.get('on') === 'true';
+          }
+        } catch {
+          return new Response('bad request body', { status: 400 });
+        }
+        if (model) dashboard.handleModelsToggle(model, on);
+        return dashboard.serveFragment('models', url, port);
+      }
       if (method !== 'GET') return undefined;
       return dashboard.serveFragment(route.name, url, port);
     }
@@ -442,6 +464,11 @@ async function main(): Promise<void> {
   // tools live in the dashboard (see http://127.0.0.1:${port}/).
   const argv = process.argv.slice(2);
   const opts = parseCli(argv);
+  // A/B harness passthrough switch (see the `transform` callback below).
+  const forcePassthrough = /^(1|true|yes|on)$/i.test(process.env.PXPIPE_DISABLE ?? '');
+  if (forcePassthrough) {
+    console.log('[pxpipe] PXPIPE_DISABLE set — passthrough mode (compress=false), still logging usage + baselines');
+  }
   // Transform options pass through empty — the proxy uses the DEFAULTS
   // baked into transform.ts. There are no behavior toggles: system slab,
   // reminders, tool_results, and history compression all run
@@ -482,7 +509,11 @@ async function main(): Promise<void> {
     //      when upstream is unhealthy without restarting.
     //   2. Otherwise use DEFAULTS in transform.ts for break-even gating.
     transform: () => {
-      if (!dashboard.getCompressionEnabled()) return { compress: false };
+      // A/B harness: PXPIPE_DISABLE=1 forces passthrough (compress=false) for the
+      // whole process, so the "normal" arm can be scripted on its own port while
+      // still logging real usage + count_tokens baselines to its own PXPIPE_LOG.
+      // (The dashboard kill switch does the same thing at runtime.)
+      if (forcePassthrough || !dashboard.getCompressionEnabled()) return { compress: false };
       return {};
     },
     onRequest: async (e) => {

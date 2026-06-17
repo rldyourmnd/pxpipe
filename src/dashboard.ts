@@ -51,13 +51,17 @@ import { aggregateEventsFile, summaryToJson } from './stats.js';
 import {
   renderPage,
   renderToggleFragment,
+  renderModelsFragment,
+  renderContextMapFragment,
   renderSessionSummaryFragment,
   renderHeaderFragment,
   renderRecentFragment,
   renderLatestFragment,
   renderSessionsFragment,
   renderStatsTableFragment,
+  type ContextMapData,
 } from './dashboard/fragments.js';
+import { getAllowedModelBases, getConfiguredModelBases, setAllowedModelBases } from './core/applicability.js';
 import type {
   StatsPayload,
   RecentPayload,
@@ -71,7 +75,7 @@ const RECENT_CAP = 50;
 /** How many rendered PNGs to keep in the in-memory image ring. Matches
  *  RECENT_CAP so every visible recent-requests row can still resolve its
  *  image. Images are never written to disk — this ring is the only store. */
-const IMAGE_RING_CAP = 50;
+const IMAGE_RING_CAP = 800;
 
 /** One rendered image held in the in-memory ring. `id` is a monotonic
  *  counter (never reused) so a RecentRow can reference its image even after
@@ -187,6 +191,20 @@ interface SessionTotals {
   // `Totals.allActualInputWeighted` / `allOutputWeighted` accumulators.
   allActualInputWeighted: number;
   allOutputWeighted: number;
+  // RAW token sums — NO rate weighting, NO baseline construction. The honest,
+  // server-sourced compression: 1 − rawActualTokens/rawBaselineTokens.
+  //   rawActualTokens   = Σ(input + cache_create + cache_read)  (real usage)
+  //   rawBaselineTokens = Σ baseline_tokens                     (count_tokens of
+  //                       the SAME body as text)
+  // Two real numbers, one division — nothing in between to get wrong. This is
+  // the headline; the weighted $ figures are diagnostics below it.
+  rawActualTokens: number;
+  rawBaselineTokens: number;
+  // Raw output tokens (the model's reply). pxpipe does NOT compress output, so
+  // the HONEST total reduction adds it to BOTH sides:
+  //   1 − (rawActual + rawOutput) / (rawBaseline + rawOutput)
+  // Headlining input-only would cherry-pick the part that compresses.
+  rawOutputTokens: number;
 }
 
 interface Totals {
@@ -371,6 +389,9 @@ export class DashboardState {
    *  cited the superseded dead verdict. Verbatim recall is still lossy;
    *  the dashboard toggle remains the kill switch. See FINDINGS.md. */
   private compressionEnabled = true;
+  /** Recent requests' transform breakdowns, for the Context Map panel + its
+   *  history selector. In-memory ring, newest last. */
+  private contextHistory: ContextMapData[] = [];
   setCompressionEnabled(on: boolean): void {
     this.compressionEnabled = on;
   }
@@ -458,6 +479,31 @@ export class DashboardState {
     const cr = u?.cache_read_input_tokens ?? 0;
     const haveUsage = u !== undefined && (inp > 0 || out > 0 || cc > 0 || cr > 0);
     const baseline = info?.baselineTokens;
+
+    // Record the request's transform breakdown for the Context Map panel. Only
+    // once real usage is in — otherwise realInput=0 and the panel shows a bogus
+    // "-100%" for an in-flight request. The completed event carries both the
+    // request info (baseline, images, buckets) and the response usage.
+    if (info && haveUsage && imgId !== undefined) {
+      // Key by the request's first image id so the recent table's "view" link
+      // (which carries that id) maps straight to this breakdown.
+      this.contextHistory.push({
+        id: imgId,
+        baselineTokens: baseline ?? 0,
+        realInput: inp + cc + cr,
+        output: out,
+        imageCount: info.imageCount ?? 0,
+        buckets: { ...(info.bucketChars ?? {}) },
+        imageIds: [...imgIds],
+        compressed,
+      });
+      // Keep in lockstep with RECENT_CAP so every "view" link in the recent
+      // table resolves to a real breakdown (was 30 < 50, so older visible rows
+      // silently fell back to the latest request's data).
+      if (this.contextHistory.length > RECENT_CAP) {
+        this.contextHistory.splice(0, this.contextHistory.length - RECENT_CAP);
+      }
+    }
     // Honest gating: only attribute savings when BOTH baseline probes
     // resolved (status === 'ok'). When the cacheable-prefix probe failed
     // (status === 'partial') we previously fell through to cacheable=0,
@@ -475,22 +521,16 @@ export class DashboardState {
     // Weighted INPUT cost we actually paid this turn.
     const actualInputEff = haveUsage ? computeActualInputEff(inp, cc, cr) : 0;
 
-    // Cache-aware baseline: decompose the unproxied counterfactual into
-    // (cacheable_prefix, cold_tail) using the second count_tokens probe,
-    // then split the prefix into (cc_u, cr_u) using the SAME absolute
-    // cc bucket the proxied path paid this turn — because user-typed
-    // content (the new tail that becomes cc) is NOT compressed, so its
-    // absolute token count is approximately the same on both paths.
-    // See src/core/baseline.ts for the full derivation and the May-2026
-    // regression that motivated the rewrite.
+    // Warmth-free, cache-aware baseline. The cached prefix is paid identically
+    // on both paths (it's already inside actualInputEff) and cancels; we credit
+    // only the net-new uncached text pxpipe compressed away — honest, NO >=0
+    // floor (a net-losing cc-heavy turn lowers it). No per-session warmth state
+    // — so live update() and replay() agree exactly.
+    // See src/core/baseline.ts for the derivation + the 2026-06-16 audit.
+    const cacheable = info?.baselineCacheableTokens ?? 0;
     const baselineInputEff =
       haveBaseline && haveUsage
-        ? computeBaselineInputEff(
-            baseline,
-            info?.baselineCacheableTokens ?? 0,
-            cc,
-            cr,
-          )
+        ? computeBaselineInputEff(baseline as number, cacheable, inp, cc, cr)
         : 0;
 
     // Output tokens are identical with/without compression — the proxy never
@@ -559,6 +599,9 @@ export class DashboardState {
           baselineMeasuredCount: 0,
           allActualInputWeighted: 0,
           allOutputWeighted: 0,
+          rawActualTokens: 0,
+          rawBaselineTokens: 0,
+          rawOutputTokens: 0,
         };
         this.sessions.set(sid, s);
         // Cap memory — drop the first (oldest by insertion order) session
@@ -580,6 +623,10 @@ export class DashboardState {
         s.baselineInputWeighted += baselineInputEff;
         s.actualInputWeighted += actualInputEff;
         s.baselineMeasuredCount += 1;
+        // RAW, rate-free compression: real tokens sent vs the same body as text.
+        s.rawActualTokens += inp + cc + cr;
+        s.rawBaselineTokens += baseline as number;
+        s.rawOutputTokens += out; // not compressed; added to BOTH sides for the honest total
       }
       // ALL-rows session bill — mirrors the global `if (haveUsage)` block
       // above (allActualInputWeighted / allOutputWeighted). Used as the
@@ -650,6 +697,8 @@ export class DashboardState {
         /* skip malformed line */
       }
     }
+    // Warmth-free baseline (see core/baseline.ts): no per-session state, so this
+    // replay produces byte-identical per-row numbers to the live update() path.
     for (const t of tail) {
       const inp = t.input_tokens ?? 0;
       const out = t.output_tokens ?? 0;
@@ -668,7 +717,7 @@ export class DashboardState {
       const actualInputEff = haveUsage ? computeActualInputEff(inp, cc, cr) : 0;
       const baselineInputEff =
         haveBaseline && haveUsage
-          ? computeBaselineInputEff(baseline as number, cacheable, cc, cr)
+          ? computeBaselineInputEff(baseline as number, cacheable, inp, cc, cr)
           : 0;
       // Output tokens land in the row for the table; totals are not
       // restored on replay (see header comment on cumulative totals).
@@ -735,6 +784,9 @@ export class DashboardState {
       baselineMeasuredCount: s.baselineMeasuredCount,
       allActualInputWeighted: s.allActualInputWeighted,
       allOutputWeighted: s.allOutputWeighted,
+      rawActualTokens: s.rawActualTokens,
+      rawBaselineTokens: s.rawBaselineTokens,
+      rawOutputTokens: s.rawOutputTokens,
     });
   }
 
@@ -951,6 +1003,24 @@ export class DashboardState {
     switch (name) {
       case 'toggle':
         return htmlResponse(renderToggleFragment(this.compressionEnabled));
+      case 'models':
+        return htmlResponse(
+          renderModelsFragment(getAllowedModelBases(), getConfiguredModelBases(), this.compressionEnabled),
+        );
+      case 'context-map': {
+        const reqParam = url.searchParams.get('req');
+        if (reqParam) {
+          // Explicit request: show ONLY that one. If its breakdown was evicted
+          // or never recorded (no usage on that completion), say so — don't
+          // silently fall back to the latest request's data under its label.
+          const found = this.contextHistory.find((h) => h.id === Number(reqParam));
+          return htmlResponse(renderContextMapFragment(found, this.contextHistory, !found));
+        }
+        // No specific request → default to the latest.
+        return htmlResponse(
+          renderContextMapFragment(this.contextHistory[this.contextHistory.length - 1], this.contextHistory),
+        );
+      }
       case 'session-summary': {
         const cur = (await this.serveCurrentSessionJson().json()) as CurrentSessionPayload;
         return htmlResponse(renderSessionSummaryFragment(cur));
@@ -1043,6 +1113,16 @@ export class DashboardState {
     const on = body.enabled === true;
     this.compressionEnabled = on;
     return jsonResponse({ compression_enabled: on });
+  }
+
+  /** POST /fragments/models — add/remove ONE model from the runtime compress
+   *  scope. In-memory only; restart resets to the PXPIPE_MODELS env / Fable-only
+   *  default. The model check (`isPxpipeSupportedModel`) reads this live. */
+  handleModelsToggle(model: string, on: boolean): void {
+    const next = new Set(getAllowedModelBases());
+    if (on) next.add(model);
+    else next.delete(model);
+    setAllowedModelBases([...next]);
   }
 }
 

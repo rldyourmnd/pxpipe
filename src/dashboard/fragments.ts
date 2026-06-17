@@ -71,6 +71,144 @@ export function renderToggleFragment(enabled: boolean): string {
   );
 }
 
+// ---- compress scope (which models get imaged) ----------------------------
+
+/** Convenience catalog of common Anthropic models shown as chips by default.
+ *  NOT exhaustive and NOT a gate — the chip set is the UNION of this catalog,
+ *  the env-configured scope (`PXPIPE_MODELS` or the Fable-only default), and
+ *  whatever is currently active, so any model the env var can enable stays
+ *  toggleable. Fable 5 reads renders cleanly; Opus 4.8/4.7 read imaged content
+ *  at a tax (see FINDINGS.md); Sonnet/Haiku read-fidelity is unvalidated — the
+ *  catalog just makes them one click, it does not endorse them. Labels are
+ *  cosmetic; an id not in the catalog renders with the raw id as its label. */
+const MODEL_CATALOG: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+];
+
+/** "compress models" chips. The chip set is the UNION of MODEL_CATALOG, the
+ *  env-configured scope (`configured`, from PXPIPE_MODELS or the Fable-only
+ *  default), and the currently-active scope (`active`) — so a model enabled via
+ *  the env var is always shown and can be toggled off AND back on (it no longer
+ *  vanishes once it leaves the active set). `active` lights the chip; every chip
+ *  routes through the same /fragments/models toggle. */
+export function renderModelsFragment(
+  active: string[],
+  configured: string[],
+  enabled: boolean,
+): string {
+  const on = new Set(active);
+  const labelOf = new Map(MODEL_CATALOG.map((m) => [m.id, m.label]));
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const id of [...MODEL_CATALOG.map((m) => m.id), ...configured, ...active]) {
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  const chips = ids
+    .map((id) => {
+      const lit = on.has(id);
+      const label = labelOf.get(id) ?? id;
+      return (
+        `<button class="chip${lit ? ' on' : ''}" type="button" ` +
+        `hx-post="/fragments/models" hx-target="#frag-models" ` +
+        `hx-vals='{"model":"${id}","on":${!lit}}'>${label}${lit ? ' ✓' : ''}</button>`
+      );
+    })
+    .join('');
+  const moot = enabled ? '' : ` <span class="hint">compression off &middot; scope moot</span>`;
+  return (
+    `<div class="models-wrap">` +
+    `<span class="models-label">compress models</span>` +
+    chips +
+    `<span class="hint">click to toggle &middot; runtime only, not persisted</span>${moot}` +
+    `</div>`
+  );
+}
+
+// ---- context map (how this request's context was transformed) -------------
+
+export interface ContextMapData {
+  id: number; // first image id for this request (matches the recent-table view link)
+  baselineTokens: number; // count_tokens of the body as text
+  realInput: number; // input + cache_create + cache_read (server-measured)
+  output: number;
+  imageCount: number;
+  buckets: Partial<Record<string, number>>; // bucket -> exact chars rendered to PNG
+  imageIds: number[]; // every rendered page's image-ring id, for the gallery
+  compressed: boolean;
+}
+
+const CTXMAP_BUCKETS: ReadonlyArray<readonly [string, string]> = [
+  ['static_slab', 'static slab (system + tools + CLAUDE.md)'],
+  ['reminder', 'system-reminder blocks'],
+  ['tool_result_prose', 'tool results — prose'],
+  ['tool_result_log', 'tool results — logs'],
+  ['tool_result_json', 'tool results — JSON'],
+  ['history', 'collapsed history'],
+];
+
+/** "How your context works" panel for the latest request: real token flow
+ *  (as-text -> real) plus the exact-char breakdown of what became images. Real
+ *  tokens are the server's count; per-row chars are exact pre-render. No cpt
+ *  guesswork — headline in tokens, breakdown in chars. */
+export function renderContextMapFragment(
+  c: ContextMapData | undefined,
+  history: ContextMapData[] = [],
+  notFound = false,
+): string {
+  const k = (n: number): string =>
+    n >= 1000 ? (n / 1000).toFixed(n >= 100_000 ? 0 : 1) + 'k' : String(Math.round(n));
+  const isLatest = c !== undefined && c.id === (history.at(-1)?.id ?? -1);
+  if (notFound) {
+    return `<div class="ctxmap"><div class="hint">That request's context breakdown is no longer available — it was evicted (only the most recent requests are kept) or had no token usage recorded. Click <strong>view</strong> on a more recent row.</div></div>`;
+  }
+  if (!c || (c.baselineTokens <= 0 && c.imageCount <= 0)) {
+    return `<div class="ctxmap"><div class="hint">Click <strong>view</strong> on a request above to see how its context was transformed.</div></div>`;
+  }
+  const base = c.baselineTokens;
+  const real = c.realInput;
+  const pct = base > 0 ? Math.round((1 - real / base) * 100) : 0;
+  const rows = CTXMAP_BUCKETS.map(([key, label]) => [label, c.buckets[key] ?? 0] as const)
+    .filter(([, ch]) => ch > 0)
+    .map(
+      ([label, ch]) =>
+        `<div class="ctxmap-row"><span class="ctxmap-lbl">${label}</span><span class="ctxmap-val">${k(ch)} chars</span></div>`,
+    )
+    .join('');
+  const head =
+    base > 0
+      ? `${k(base)} tok as text &rarr; <strong>${k(real)} tok real</strong> &middot; <span class="ctxmap-pct">&minus;${pct}%</span>`
+      : `<strong>${k(real)} tok real</strong>`;
+  const title = isLatest ? 'CONTEXT BREAKDOWN — latest' : 'CONTEXT BREAKDOWN — selected request';
+  const ids = c.imageIds ?? [];
+  const gallery = ids.length
+    ? `<div class="ctxmap-imgs-title">${ids.length} rendered page${ids.length === 1 ? '' : 's'} sent to the model (scroll):</div>` +
+      `<div class="ctxmap-imgs">` +
+      ids
+        .map(
+          (id) =>
+            `<img class="ctxmap-img" src="/proxy-latest-png?id=${id}" alt="page ${id}" loading="lazy" title="page ${id}" onerror="this.classList.add('img-gone'); this.alt='page ${id} evicted from buffer';" />`,
+        )
+        .join('') +
+      `</div>`
+    : '';
+  return (
+    `<div class="ctxmap">` +
+    `<div class="ctxmap-head"><strong>${title}</strong> &middot; ${head} &middot; ${c.imageCount} image page${c.imageCount === 1 ? '' : 's'}</div>` +
+    `<div class="ctxmap-sub">became images — exact chars rendered to PNG (pxpipe is lossy on these):</div>` +
+    (rows || `<div class="ctxmap-row hint">nothing imaged this request</div>`) +
+    `<div class="ctxmap-foot hint">headline tokens are the server's real count (input + cache); per-row values are exact pre-render chars. Output (${k(c.output)} tok) is never imaged.</div>` +
+    gallery +
+    `</div>`
+  );
+}
+
 // ---- current-session headline --------------------------------------------
 
 // MUST stay in lockstep with the server-side `ASSUMED_INPUT_USD_PER_MTOK`
@@ -80,20 +218,34 @@ const INPUT_USD_PER_MTOK = 10.0;
 export function renderSessionSummaryFragment(data: CurrentSessionPayload): string {
   const measured = data.baselineMeasuredCount ?? 0;
   if (measured <= 0) return '';
-  const baselineTok = data.baselineInputWeighted ?? 0;
-  const actualTok = data.actualInputWeighted ?? 0;
-  const savedTok = Math.max(0, baselineTok - actualTok);
-  const savedUsd = (savedTok * INPUT_USD_PER_MTOK) / 1e6;
-  const baselineUsd = (baselineTok * INPUT_USD_PER_MTOK) / 1e6;
-  const savedPct = baselineUsd > 0 ? (savedUsd / baselineUsd) * 100 : 0;
+  // HEADLINE: raw, rate-free TOTAL token reduction (input + output), real server
+  // numbers, one division — no rate weighting. Output isn't compressed, so it's
+  // added to BOTH sides (headlining input-only would cherry-pick).
+  const rawActual = data.rawActualTokens ?? 0;       // input side, real (in+cc+cr)
+  const rawBaseline = data.rawBaselineTokens ?? 0;   // input side, as text (count_tokens)
+  const rawOutput = data.rawOutputTokens ?? 0;       // reply (same both sides, uncompressed)
+  const ppTotal = rawActual + rawOutput;
+  const textTotal = rawBaseline + rawOutput;
+  const totalPct = textTotal > 0 ? (1 - ppTotal / textTotal) * 100 : 0;
+  // Honest sign: pxpipe can cost MORE on a session (cc-heavy turns, or the
+  // passthrough control), so phrase a negative as "more tokens" rather than
+  // render a garbled "-7% fewer tokens".
+  const totalLabel =
+    totalPct >= 0 ? `${totalPct.toFixed(0)}% fewer tokens` : `${(-totalPct).toFixed(0)}% more tokens`;
+  const inputPct = rawBaseline > 0 ? (1 - rawActual / rawBaseline) * 100 : 0;
+  const k = (t: number) => `${(t / 1000).toFixed(0)}k`;
   return (
     `<div class="line">` +
     `<span class="label">THIS SESSION</span>` +
-    ` &mdash; saved <span class="num">$${savedUsd.toFixed(2)}</span>` +
-    ` (<span class="num">${savedPct.toFixed(1)}%</span> of` +
-    ` <span class="muted">$${baselineUsd.toFixed(2)}</span> baseline)` +
+    ` &mdash; <span class="num">${totalLabel}</span>` +
+    ` (<span class="num">${k(ppTotal)}</span> vs <span class="muted">${k(textTotal)}</span> total)` +
     ` &mdash; <span class="muted">${measured} requests</span>` +
-    `</div>`
+    `</div>` +
+    `<div class="line"><span class="small muted">` +
+    `total = input + output, real server tokens. input compressed <b>${inputPct.toFixed(0)}%</b> ` +
+    `(${k(rawActual)} vs ${k(rawBaseline)} as text); output <b>not</b> compressed (${k(rawOutput)}, same both sides). ` +
+    `No rates, no assumptions &mdash; what it saves in $ depends on pricing; weekly-cap weight unknown.` +
+    `</span></div>`
   );
 }
 
@@ -215,17 +367,10 @@ export function renderRecentFragment(p: RecentPayload): string {
       ? `<tr><td colspan="9" class="small" style="color:#6e7681">no requests yet</td></tr>`
       : rows
           .map((e: RecentRow, i: number) => {
-            const ids = e.img_ids ?? (e.img_id != null ? [e.img_id] : []);
-            const thumbs =
-              ids.length > 0
-                ? `<div class="thumb-strip">` +
-                  ids
-                    .map(
-                      (id) =>
-                        `<button type="button" class="thumb-btn" title="image #${id}" onclick="ppPin(${id})"><img class="thumb" src="/proxy-latest-png?id=${id}" alt="img ${id}" /></button>`,
-                    )
-                    .join('') +
-                  `</div>`
+            const viewId = (e.img_ids ?? (e.img_id != null ? [e.img_id] : []))[0];
+            const viewLink =
+              viewId != null
+                ? `<a class="rec-view" href="#" hx-get="/fragments/context-map?req=${viewId}" hx-target="#frag-context-map" hx-swap="innerHTML">view</a>`
                 : `<span class="muted">-</span>`;
             const saved = e.session_saved_so_far_delta ?? 0;
             return (
@@ -238,13 +383,13 @@ export function renderRecentFragment(p: RecentPayload): string {
               `<td class="num">${e.baseline_input != null ? numFmt(e.baseline_input) : '-'}</td>` +
               `<td class="num">${e.actual_input != null ? numFmt(e.actual_input) : '-'}</td>` +
               `<td class="num pos">${saved > 0 ? '+' + numFmt(saved) : '-'}</td>` +
-              `<td class="img-cell">${thumbs}</td>` +
+              `<td class="num">${viewLink}</td>` +
               `</tr>`
             );
           })
           .join('');
   return (
-    `<table><thead><tr><th>#</th><th class="num">status</th><th>path</th><th class="num">cc</th><th class="num">cr</th><th class="num">baseline</th><th class="num">actual</th><th class="num">saved</th><th class="num">img</th></tr></thead>` +
+    `<table><thead><tr><th>#</th><th class="num">status</th><th>path</th><th class="num">cc</th><th class="num">cr</th><th class="num">baseline</th><th class="num">actual</th><th class="num">saved</th><th class="num">view</th></tr></thead>` +
     `<tbody>${body}</tbody></table>`
   );
 }
@@ -405,6 +550,33 @@ const CSS = `
   .toggle:disabled { opacity: 0.5; cursor: wait; }
   .hint { color: #6e7681; font-size: 11px; }
 
+  /* compress-scope chips */
+  .models-wrap { margin: -6px 0 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .models-label { color: #8b949e; font-size: 12px; }
+  .chip { background: #21262d; color: #8b949e; border: 1px solid #30363d; border-radius: 12px;
+    padding: 3px 11px; cursor: pointer; font: inherit; font-size: 12px; }
+  .chip:hover { border-color: #6e7681; color: #c9d1d9; }
+  .chip.on { background: rgba(31,111,235,0.2); color: #58a6ff; border-color: #1f6feb; }
+
+  /* context map */
+  .ctxmap { margin: 6px 0 16px; padding: 10px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; }
+  .ctxmap-head { font-size: 13px; color: #c9d1d9; margin-bottom: 4px; }
+  .rec-view { color: #58a6ff; text-decoration: underline; cursor: pointer; }
+  .rec-view:hover { color: #79c0ff; }
+  .ctxmap-imgs-title { font-size: 11px; color: #6e7681; margin: 8px 0 4px; }
+  .ctxmap-imgs { display: flex; flex-wrap: wrap; gap: 4px; max-height: 460px; overflow: auto;
+    background: #fff; padding: 4px; border: 1px solid #30363d; border-radius: 4px; }
+  .ctxmap-img { height: 150px; width: auto; max-width: 260px; object-fit: contain; object-position: top left;
+    image-rendering: pixelated; background: #fff; border: 1px solid #d0d7de; }
+  .ctxmap-img.img-gone { width: 150px; height: 60px; background: #161b22; border: 1px dashed #30363d;
+    color: #6e7681; font-size: 10px; }
+  .ctxmap-pct { color: #3fb950; font-weight: 600; }
+  .ctxmap-sub { font-size: 11px; color: #8b949e; margin: 6px 0 4px; }
+  .ctxmap-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; border-bottom: 1px solid #161b22; }
+  .ctxmap-lbl { color: #8b949e; }
+  .ctxmap-val { color: #c9d1d9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ctxmap-foot { margin-top: 6px; }
+
   /* session summary */
   #frag-session .line { font-size: 14px; color: #c9d1d9; margin-bottom: 12px; padding: 8px 12px;
     background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
@@ -554,12 +726,14 @@ export function renderPage(port: number): string {
 <h1><span class="dot"></span>pxpipe</h1>
 
 <div id="frag-toggle" hx-get="/fragments/toggle" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+<div id="frag-models" hx-get="/fragments/models" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
 <div id="frag-session" hx-get="/fragments/session-summary" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
 <div id="frag-header" hx-get="/fragments/header" hx-trigger="load, every 2s" hx-swap="innerHTML"><div class="sub">connecting&hellip;</div></div>
 
 <div class="row">
   <div class="panel">
     <h2>recent requests</h2>
+    <div id="frag-context-map" hx-get="/fragments/context-map" hx-trigger="load" hx-swap="innerHTML"></div>
     <div id="frag-recent" hx-get="/fragments/recent" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
   </div>
   <div class="panel">

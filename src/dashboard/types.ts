@@ -171,4 +171,13 @@ export interface CurrentSessionPayload {
   allActualInputWeighted?: number;
   /** Sum of `outputWeighted` across EVERY request in the session. */
   allOutputWeighted?: number;
+  /** RAW token sums (no rate weighting). The honest headline compression:
+   *  1 − rawActualTokens/rawBaselineTokens. rawActual = Σ(input+cache_create+
+   *  cache_read) real usage; rawBaseline = Σ baseline_tokens (count_tokens of the
+   *  same body as text). Two real server numbers, one division. */
+  rawActualTokens?: number;
+  rawBaselineTokens?: number;
+  /** Raw output tokens (the reply). Not compressed; added to both sides for the
+   *  honest TOTAL reduction so the headline isn't input-only cherry-picking. */
+  rawOutputTokens?: number;
 }

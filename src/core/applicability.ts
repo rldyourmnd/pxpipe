@@ -23,28 +23,59 @@ function baseModelId(model: string): string {
   return model.replace(VARIANT_TAG, '');
 }
 
-/** Base model ids pxpipe is allowed to transform, from `PXPIPE_MODELS`
- *  (comma-separated). Defaults to Fable 5 only — the validated production
- *  scope. Read per call so the scope can be widened/narrowed by env alone,
- *  no rebuild or restart.
+/** Runtime override of the allowed-model scope, set from the dashboard
+ *  ("compress models" chips). `null` = no override → fall back to the
+ *  `PXPIPE_MODELS` env (or the built-in default). In-memory only; a restart
+ *  drops it and the env/default scope applies again. */
+let runtimeModelBases: readonly string[] | null = null;
+
+/** Base model ids pxpipe is allowed to transform. Resolution order, read per
+ *  call so the scope can be flipped LIVE (no rebuild/restart):
+ *    1. runtime override (dashboard chips), if set
+ *    2. `PXPIPE_MODELS` env (comma-separated)
+ *    3. built-in default: **Fable 5 only**.
  *
- *  Validated 2026-06-09: Fable 5 reads pxpipe renders at 100/100 on the
- *  novel-arithmetic eval (Opus 4.8: 93/100) and bills the same image tokens
- *  (w·h/750, same tokenizer as Opus 4.7+). Opus was the original scope but
- *  carried a ~7% read tax, so it was dropped once a tax-free model existed.
- *  Re-tested 2026-06-16 on a newer Opus 4.8 snapshot: improved to 98/100
- *  (-2pp) on arithmetic and 6/15 (was 0/15) on dense-hex recall, but still
- *  taxed and still silently confabulating vs Fable's 100/100 and 13/15 — so
- *  the default stays Fable-only.
- *  To re-enable it (e.g. while re-evaluating a newer Opus snapshot):
- *    PXPIPE_MODELS=claude-fable-5,claude-opus-4-8
- *  Mythos 5 is unmeasured (no access). */
-function allowedModelBases(): string[] {
+ *  Opus 4.8 is OFF by default (opt-in via the dashboard or PXPIPE_MODELS): it
+ *  uses the identical pipeline/render, but reads imaged content at a measurable
+ *  tax (FINDINGS.md 2026-06-16: ~2pp arithmetic, 6/15 dense-hex recall vs
+ *  Fable's 100/100, 13/15), so silently compressing the operator's main driver
+ *  is the wrong default. Examples:
+ *    PXPIPE_MODELS=claude-fable-5                 # Fable only (the default)
+ *    PXPIPE_MODELS=claude-fable-5,claude-opus-4-8 # add Opus */
+/** The CONFIGURED scope — `PXPIPE_MODELS` env (comma-separated) or the built-in
+ *  Fable-only default — IGNORING any dashboard runtime override. */
+function envOrDefaultBases(): string[] {
   const raw = process.env.PXPIPE_MODELS;
   return (raw && raw.trim() ? raw : 'claude-fable-5')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function allowedModelBases(): string[] {
+  if (runtimeModelBases !== null) return [...runtimeModelBases];
+  return envOrDefaultBases();
+}
+
+/** Current effective allowed-model scope (runtime override ?? env ?? default). */
+export function getAllowedModelBases(): string[] {
+  return allowedModelBases();
+}
+
+/** The configured base scope (`PXPIPE_MODELS` env, or the Fable-only default),
+ *  independent of the dashboard runtime override. The dashboard unions this into
+ *  its chip set so every env-enabled model is always offered as a toggle —
+ *  even one switched off at runtime — instead of vanishing once it leaves the
+ *  active scope. */
+export function getConfiguredModelBases(): string[] {
+  return envOrDefaultBases();
+}
+
+/** Set the runtime allowed-model scope from the dashboard. An empty array means
+ *  compress NO models (scope off); `null` clears the override and falls back to
+ *  the env/default. In-memory only — not persisted across restart. */
+export function setAllowedModelBases(list: readonly string[] | null): void {
+  runtimeModelBases = list === null ? null : list.map((s) => s.trim()).filter(Boolean);
 }
 
 /** True when pxpipe is allowed to transform requests for this model. A model

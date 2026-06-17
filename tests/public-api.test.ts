@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCountTokensBodies,
+  getAllowedModelBases,
   isPxpipeSupportedGptModel,
   isPxpipeSupportedModel,
+  setAllowedModelBases,
   shouldTransformAnthropicMessages,
   transformAnthropicMessages,
   transformOpenAIChatCompletions,
@@ -12,16 +14,17 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 describe('public library API', () => {
-  it('recognizes Fable 5 (with suffix aliases) and no other models as supported', () => {
+  it('recognizes Fable 5 (with suffix aliases) as the default scope; Opus is OFF by default', () => {
     expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true);
     expect(isPxpipeSupportedModel('claude-fable-5-high')).toBe(true);
-    // Opus was the original measured scope (4.7+) but is disabled 2026-06-09:
-    // Fable 5 reads renders at 100/100 vs Opus 4.8's 93/100 with identical
-    // image billing, so the Opus read tax is no longer worth carrying.
+    // Opus 4.8 is OPT-IN, not in the default scope — same pipeline/render as
+    // Fable, but it reads imaged content at a tax (FINDINGS.md 2026-06-16), so
+    // the default doesn't silently compress the operator's main driver. Enable
+    // it via PXPIPE_MODELS or the dashboard "compress models" chips.
     expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false);
+    // older Opus + other families are not in the default scope
     expect(isPxpipeSupportedModel('claude-opus-4-7')).toBe(false);
     expect(isPxpipeSupportedModel('claude-opus-4-6')).toBe(false);
-    // Mythos 5 shares the architecture but is unmeasured (no access).
     expect(isPxpipeSupportedModel('claude-mythos-5')).toBe(false);
     expect(isPxpipeSupportedModel('claude-fable-50')).toBe(false);
     expect(isPxpipeSupportedModel('claude-sonnet-4-7')).toBe(false);
@@ -31,22 +34,43 @@ describe('public library API', () => {
   it('strips bracketed variant tags like [1m] before matching', () => {
     expect(isPxpipeSupportedModel('claude-fable-5[1m]')).toBe(true);
     expect(isPxpipeSupportedModel('claude-fable-5-high[1m]')).toBe(true);
-    // a non-allowed base keeps being rejected even with a variant tag
-    expect(isPxpipeSupportedModel('claude-opus-4-8[1m]')).toBe(false);
+    expect(isPxpipeSupportedModel('claude-opus-4-8[1m]')).toBe(false); // Opus opt-in, off by default
+    // a non-scoped base is still rejected even with a variant tag
+    expect(isPxpipeSupportedModel('claude-opus-4-7[1m]')).toBe(false);
   });
 
-  it('honors PXPIPE_MODELS to widen the gate without a code change', () => {
+  it('honors PXPIPE_MODELS to override the default scope', () => {
     const prev = process.env.PXPIPE_MODELS;
     try {
-      process.env.PXPIPE_MODELS = 'claude-fable-5,claude-opus-4-8';
-      expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(true);
-      expect(isPxpipeSupportedModel('claude-opus-4-8[1m]')).toBe(true);
-      expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true); // still listed
-      expect(isPxpipeSupportedModel('claude-opus-4-7')).toBe(false); // not listed
-      expect(isPxpipeSupportedModel('claude-sonnet-4-7')).toBe(false);
+      // narrow to Fable only
+      process.env.PXPIPE_MODELS = 'claude-fable-5';
+      expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true);
+      expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false);
+      // re-point to a different set
+      process.env.PXPIPE_MODELS = 'claude-fable-5,claude-opus-4-7';
+      expect(isPxpipeSupportedModel('claude-opus-4-7')).toBe(true);
+      expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false); // not in this set
     } finally {
       if (prev === undefined) delete process.env.PXPIPE_MODELS;
       else process.env.PXPIPE_MODELS = prev;
+    }
+  });
+
+  it('honors the dashboard runtime override (setAllowedModelBases) over env/default', () => {
+    try {
+      // override takes precedence over the env/default scope
+      setAllowedModelBases(['claude-fable-5', 'claude-opus-4-8']);
+      expect(getAllowedModelBases()).toEqual(['claude-fable-5', 'claude-opus-4-8']);
+      expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(true); // opted in at runtime
+      // empty list = compress nothing
+      setAllowedModelBases([]);
+      expect(isPxpipeSupportedModel('claude-fable-5')).toBe(false);
+      // null clears the override → back to the Fable-only default
+      setAllowedModelBases(null);
+      expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true);
+      expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false);
+    } finally {
+      setAllowedModelBases(null); // never leak the override into other tests
     }
   });
 
@@ -170,11 +194,11 @@ describe('public library API', () => {
 
   it('wraps the transformer with model gating and cache ownership metadata', async () => {
     const unsupported = enc.encode(JSON.stringify({
-      model: 'claude-opus-4-8',
+      model: 'claude-sonnet-4-6',
       system: 'x'.repeat(20_000),
       messages: [{ role: 'user', content: 'hello' }],
     }));
-    const skipped = await transformAnthropicMessages({ body: unsupported, model: 'claude-opus-4-8' });
+    const skipped = await transformAnthropicMessages({ body: unsupported, model: 'claude-sonnet-4-6' });
     expect(skipped.applied).toBe(false);
     expect(skipped.reason).toBe('unsupported_model');
     expect(skipped.body).toBe(unsupported);

@@ -1,6 +1,9 @@
 export {
+  getAllowedModelBases,
+  getConfiguredModelBases,
   isPxpipeSupportedGptModel,
   isPxpipeSupportedModel,
+  setAllowedModelBases,
   shouldTransformAnthropicMessages,
   type PxpipeApplicabilityInput,
   type PxpipeApplicabilityReason,
