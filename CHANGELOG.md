@@ -4,6 +4,18 @@ All notable changes to pxpipe are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor = features /
 behavioral changes, patch = fixes).
 
+## 0.6.1 — 2026-06-21
+
+### Fixed
+- **GPT opening prompt no longer reads as the live request.** The static slab is now
+  inserted as its own dedicated image item instead of being bundled onto the first
+  real user message. That message stayed protected from collapse, so the opening
+  prompt floated at the front as un-collapsed, live-looking text (right next to the
+  slab image) — and gpt-5.x would answer it instead of the actual latest turn. The
+  opening prompt is now collapsible, turn-indexed history like every other old turn;
+  only the slab item is protected. Both Chat Completions and Responses paths.
+  (`openai.ts`)
+
 ## 0.6.0 — 2026-06-21
 
 Structure-through role attribution and a turn-index recency anchor for collapsed
