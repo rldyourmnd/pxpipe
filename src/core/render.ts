@@ -257,8 +257,9 @@ export function measureLineCols(line: string, markerScale: number = 1): number {
   return w;
 }
 
-/** Always renders at full canvas width. Signature kept for transform.ts compatibility; returns cols unchanged. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/** Shrinks `cols` to the widest actual line in `text` (never below it), so the
+ *  canvas width matches real content. Delegates to `measureContentCols`; the gate
+ *  and renderer both call this so their pixel cost agrees. */
 export function shrinkColsToContent(text: string, cols: number, markerScale: number = 1): number {
   // Real content-width measurement — delegates to measureContentCols (was historically a
   // no-op stub). The proxy's cost gate AND renderer both call this, so sizing the canvas to
