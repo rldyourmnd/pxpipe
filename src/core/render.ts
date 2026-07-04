@@ -23,9 +23,11 @@ import {
 } from './atlas-gray.js';
 import { encodeGrayPng, encodeRgbPng } from './png.js';
 
-/** Page-height ceiling. Measured (2026-07-01, count_tokens sweep, claude-sonnet-4-5 — see
- *  /tmp/pxexp/LEVER1-findings.md): the API downscales any image to fit BOTH long-edge ≤1568
- *  AND ~1.15 MP (≈1,143,750 px), then bills ≈ px/750 (≈1525 tok cap, applied per-image).
+/** Page-height ceiling. Anthropic bills the exact 28-px patch count ⌈w/28⌉×⌈h/28⌉
+ *  (see anthropic-vision.ts): a 1568×728 page = 56×26 = 1456 visual tokens. The
+ *  2026-07-01 count_tokens sweep (claude-sonnet-4-5) measured the resize and a
+ *  ~px/750 slope (≈ the 28²=784 approximation): the API fits any image to BOTH a
+ *  ≤1568 long edge AND ~1.15 MP (≈1,143,750 px) before charging.
  *  The old 1932×1932 page was billed at cap but resampled 0.555× → 5×8 glyphs reached the
  *  encoder at ~2.8×4.4 px. New page shape 1568×728 = 1,141,504 px fits both bounds →
  *  WYSIWYG for the vision encoder (also satisfies ≤2000 px/side for >20-image requests). */
@@ -739,7 +741,8 @@ export async function renderTextToPngs(
 
 const GUTTER_CELLS = 4;
 // Width hard-capped at the API's long-edge bound: anything wider is resampled server-side
-// (measured 2026-07-01: fit-within 1568-edge AND ~1.15 MP, then ≈px/750 billing).
+// (measured 2026-07-01: fit within a 1568 long edge AND ~1.15 MP; billed by the exact
+// 28-px patch count, ≈ the px/750 slope).
 const MAX_WIDTH_PX = 1568;
 
 const GUTTER_DIVIDER_INK = 64; // pre-invert → 191 post-invert: light gray column separator
