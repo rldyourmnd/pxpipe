@@ -660,8 +660,7 @@ export async function transformOpenAIChatCompletions(
     return { body, info };
   }
 
-  // Portrait strip only — multi-col would exceed 768px → downscale.
-  const numCols = 1;
+  // GPT slab renders as a single portrait strip — multi-col would exceed 768px → downscale.
   const reflowNote = o.reflow
     ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.'
     : '';
