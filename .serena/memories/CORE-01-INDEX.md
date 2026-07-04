@@ -18,8 +18,8 @@ runtime-agnostic `createProxy` factory:
 - `createProxy` itself lives at `src/core/proxy.ts:597` (`export function
   createProxy(config: ProxyConfig = {})`).
 
-`package.json`: name `pxpipe-proxy`, version `0.8.0` (verify current before
-citing elsewhere — versions change), bin `pxpipe` → `bin/cli.js`, ESM
+`package.json`: name `pxpipe-proxy`, version `0.9.0-fork` (fork build; verify
+current before citing elsewhere — versions change), bin `pxpipe` → `bin/cli.js`, ESM
 (`"type": "module"`), `packageManager: pnpm@10.21.0`, `engines.node: >=18`.
 Public subpath exports (`package.json` `exports` map): `.` (core index),
 `./transform` (library.js), `./measurement`, `./applicability`, `./proxy`,
