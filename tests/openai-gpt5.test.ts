@@ -347,6 +347,61 @@ describe('transformOpenAIResponses (gpt-5.6)', () => {
     expect(textParts.some((p) => p.text?.includes('Do the thing'))).toBe(true);
   });
 
+  it('records outgoingTextChars for compressed Responses requests, counting text but not image base64', async () => {
+    const body = enc.encode(JSON.stringify({
+      model: 'gpt-5.6',
+      instructions: BIG_INSTRUCTIONS,
+      input: [{ role: 'user', content: 'Please do the thing.' }],
+      tools: [{ type: 'function', name: 'do_thing', description: 'pick a thing', parameters: { type: 'object', properties: {} } }],
+    }));
+    const result = await transformOpenAIResponses(body, { charsPerToken: 1, minCompressChars: 1 });
+    expect(result.info.compressed).toBe(true);
+    const otc = result.info.outgoingTextChars ?? 0;
+    expect(otc).toBeGreaterThan(0);
+
+    const out = JSON.parse(dec.decode(result.body)) as {
+      instructions?: string;
+      input: Array<{ content?: unknown }>;
+      tools?: Array<{ name?: string; description?: string; parameters?: unknown }>;
+    };
+
+    // A real rendered image rode along as input_image base64 (thousands of chars)…
+    let imageChars = 0;
+    for (const item of out.input) {
+      const c = item.content;
+      if (Array.isArray(c)) {
+        for (const p of c as Array<{ type?: string; image_url?: unknown }>) {
+          if (p.type === 'input_image' && typeof p.image_url === 'string') imageChars += p.image_url.length;
+        }
+      }
+    }
+    expect(imageChars).toBeGreaterThan(2000);
+    // …and the denominator must NOT include any of that base64.
+    expect(otc).toBeLessThan(imageChars);
+
+    // It DOES count the instructions pointer + input_text parts + tool fields.
+    let textChars = 0;
+    if (typeof out.instructions === 'string') textChars += out.instructions.length;
+    for (const item of out.input) {
+      const c = item.content;
+      if (typeof c === 'string') textChars += c.length;
+      else if (Array.isArray(c)) {
+        for (const p of c as Array<{ type?: string; text?: string }>) {
+          if (p.type === 'input_text' && typeof p.text === 'string') textChars += p.text.length;
+        }
+      }
+    }
+    for (const t of out.tools ?? []) {
+      if (typeof t.name === 'string') textChars += t.name.length;
+      if (typeof t.description === 'string') textChars += t.description.length;
+      if (t.parameters !== undefined) textChars += JSON.stringify(t.parameters).length;
+    }
+    // otc equals the text sum up to the '\n\n' separators responsesContentText adds
+    // between array parts (a handful of chars) — and is nowhere near the base64.
+    expect(otc).toBeGreaterThanOrEqual(textChars);
+    expect(otc).toBeLessThanOrEqual(textChars + 64);
+  });
+
   it('returns compressed=false with not_profitable/below_min reason for small input', async () => {
     const body = enc.encode(JSON.stringify({
       model: 'gpt-5.6',
