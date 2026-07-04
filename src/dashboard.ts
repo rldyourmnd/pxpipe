@@ -1250,7 +1250,7 @@ export class DashboardState {
       compression_enabled: this.compressionEnabled,
     };
     return new Response(JSON.stringify(payload, null, 2), {
-      headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' },
+      headers: { 'content-type': 'application/json' },
     });
   }
 
@@ -1266,7 +1266,7 @@ export class DashboardState {
       image_ids: this.images.map((im) => im.id),
     };
     return new Response(JSON.stringify(payload), {
-      headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' },
+      headers: { 'content-type': 'application/json' },
     });
   }
 
@@ -1300,12 +1300,12 @@ export class DashboardState {
     if (!entry || entry.sourceText === undefined) {
       return new Response(JSON.stringify({ error: 'no source text' }), {
         status: 404,
-        headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' },
+        headers: { 'content-type': 'application/json' },
       });
     }
     return new Response(
       JSON.stringify({ id: entry.id, meta: entry.meta, source_text: entry.sourceText }),
-      { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' } },
+      { headers: { 'content-type': 'application/json' } },
     );
   }
 
@@ -1454,7 +1454,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: {
       'content-type': 'application/json',
-      'access-control-allow-origin': '*',
     },
   });
 }
