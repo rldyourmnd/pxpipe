@@ -4,6 +4,54 @@ All notable changes to pxpipe are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor = features /
 behavioral changes, patch = fixes).
 
+## 0.9.0-fork — 2026-07-04
+
+Fork build (`rldyourmnd/pxpipe`) integrating the audit follow-up PRs. The
+`-fork` suffix so `pxpipe --version` identifies this build vs upstream.
+
+### Added
+- **Anthropic vision cost model** (`src/core/anthropic-vision.ts`): the documented
+  28-px patch count `⌈w/28⌉×⌈h/28⌉` with the exact resize (binary-search
+  reference) and resolution tiers (standard 1568/1568, high-res 2576/4784). The
+  per-request gate and the export estimator use it; the retired `(w·h)/750`
+  approximation is dropped.
+- **`eval/opus-density/`** — a harness to measure Opus 4.8 vs Fable 5
+  exact-string recall at 5×8 / 7×10 / 9×12 densities before considering an opt-in
+  Opus profile. Measurement only; no default change.
+
+### Changed
+- **Exact-string abstention** in the rendered framing: the reader is told to defer
+  exact identifiers/hashes/numbers to the factsheet or source instead of guessing
+  (the main documented failure mode — silent confabulation).
+- **Factsheet** now extracts high-risk camelCase/PascalCase identifiers (tier 1,
+  never evicting tier-0 SHAs/numbers) — the residual miss class from the
+  legibility audit.
+- **GPT tool docs** no longer double-bill the native tool description; the imaged
+  framing says "schema documentation", not "full tool/schema documentation".
+- Static-slab default `cols` 313 → 312 (1568 px — exactly the width cap).
+
+### Fixed
+- `pxpipe --version` prints the real package version (inlined at build time)
+  instead of a stale `0.2.0` fallback.
+- `pxpipe export --git` applies `--include`/`--exclude` and the 1 MiB size cap to
+  untracked files (was a binary check only).
+- OpenAI Responses: array-form system/developer content is now imaged, and
+  compressed Responses rows record `outgoingTextChars`.
+- `shouldTransformAnthropicMessages()` matches every route the proxy transforms
+  (including `/anthropic/messages`).
+
+### Docs / CI
+- README Library-use example fixed (`pxpipe-proxy`, `renderTextToImages`).
+- README, `RENDER_SIZING`, `TRANSFORM_INFO`, and the legibility audit synced to
+  the 1568×728 / 312-col / 28,080-char geometry and the patch billing model.
+- `tsconfig` stale dashboard comment removed; a docs-integrity test guards
+  README/docs links (relative, reference-style, HTML, `#anchors`) and the README
+  public-API example.
+- CI: least-privilege `permissions: contents: read` + cancel-stale concurrency.
+
+### Repo
+- Serena project memories initialized as the fork's working-base knowledge.
+
 ## 0.8.0 — 2026-07-03
 
 ### Security
