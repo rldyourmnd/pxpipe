@@ -4,6 +4,14 @@ Status: **plan locked, not implemented**. This doc captures the data analysis
 and the chosen design so a future session (or rollback reader) can re-derive
 the same plan without re-running the telemetry queries.
 
+> **Update (2026-07-04):** since this plan was locked, the image-cost model moved
+> from the `(w·h)/750` approximation (the `imageCount × 2500` and `β ≈ 4/750`
+> figures below) to Anthropic's exact 28-px patch count in
+> `src/core/anthropic-vision.ts`; the profitability gate now sums per-image
+> `patchTokens × ANTHROPIC_GATE_MARGIN` (1.10). The chars-per-token analysis below
+> (the *text* side) is unaffected — but re-derive the image-cost constants against
+> the patch model before implementing.
+
 ## 1. The problem
 
 `isCompressionProfitable` in `src/core/transform.ts` decides whether a text
