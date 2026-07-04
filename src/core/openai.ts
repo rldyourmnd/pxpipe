@@ -322,19 +322,26 @@ function isFlatFunctionTool(tool: unknown): tool is ResponsesFlatTool {
  *  IMAGED, so carrying the schema here is compression, not duplication: the imaged
  *  copy keeps param docs readable while tools[] ships the stripped skeleton.
  *  (Contrast transform.ts renderToolDoc: text reference → prose only.) */
+// On the GPT path the native tools[] KEEP their description — only the schema
+// annotations are stripped (see rewriteToolsForGpt). So the description must NOT
+// be imaged: doing so double-bills it (native text + image pixels) while the
+// savings baseline credits only the stripped-schema delta. Image the heading +
+// full schema (which carries the stripped annotations); the description rides
+// natively. (The Anthropic path differs on purpose — it stubs the native
+// description and images the full doc, a real move rather than a duplicate.)
 function renderToolDoc(tool: OpenAIFunctionTool): string {
   const f = tool.function;
   const parts = [`## Tool: ${f.name ?? '?'}`];
-  if (typeof f.description === 'string' && f.description.length > 0) parts.push(f.description);
   if (f.parameters !== undefined) {
     parts.push('```json\n' + JSON.stringify(f.parameters) + '\n```');
   }
   return parts.join('\n');
 }
 
+// Flat (Responses) tool doc — same rule as renderToolDoc: the native description
+// is kept, so imaging it would double-bill; image only the heading + schema.
 function renderFlatToolDoc(tool: ResponsesFlatTool): string {
   const parts = [`## Tool: ${tool.name ?? '?'}`];
-  if (typeof tool.description === 'string' && tool.description.length > 0) parts.push(tool.description);
   if (tool.parameters !== undefined) {
     parts.push('```json\n' + JSON.stringify(tool.parameters) + '\n```');
   }
@@ -489,11 +496,13 @@ function gptImageTokens(model: string, images: RenderedImage[]): number {
   return n;
 }
 
-/** Text-token value of what pxpipe replaced with images this request: the
- *  original system/developer text (now a pointer + image) plus the tool
- *  *description* tokens stripped from the native JSON (the verbose docs moved
- *  into the image). Tool *structure* stays in the JSON on both paths, so only
- *  the stripped delta counts. Compared against gptImageTokens for the saving. */
+/** Text-token value of what pxpipe actually removed from the native request this
+ *  turn: the system/developer text (now a pointer + image) plus the tool-schema
+ *  ANNOTATION tokens stripped from tools[] (orig − stripped). Tool descriptions
+ *  and schema STRUCTURE stay native on the GPT path — they cancel in orig−stripped
+ *  and are not counted — and (since the tool-doc dedupe) the description is no
+ *  longer imaged either, so imageTokens is not inflated by bytes nothing was
+ *  saved on. Compared against gptImageTokens for the saving. */
 function gptBaselineImagedTokens(
   systemTexts: string[],
   originalTools: unknown[] | undefined,
