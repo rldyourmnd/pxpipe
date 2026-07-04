@@ -4,6 +4,26 @@ All notable changes to pxpipe are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor = features /
 behavioral changes, patch = fixes).
 
+## 0.8.0 — 2026-07-03
+
+### Security
+- Worker: deploying with an `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` override now
+  requires `PXPIPE_WORKER_SECRET`; callers authenticate via the
+  `x-pxpipe-secret` header. Without the secret the Worker returns 503 instead
+  of proxying on your key.
+- Node: dashboard binds to loopback (127.0.0.1) by default; set `HOST` to opt
+  into all interfaces.
+- Dashboard: JSON endpoints no longer send `access-control-allow-origin: *`.
+
+### Fixed
+- History imaging no longer teaches the model to skip `Read` calls.
+- Fixed the pxpipe-vs-plain-Claude demo image link.
+
+### Docs
+- README cut to 217 lines — caveats deduped, benchmark prose moved to eval/
+  links. Demo URLs pinned to 127.0.0.1 to match the loopback bind; demo
+  details revised for Fable 5 and Opus 4.8.
+
 ## 0.7.2 — 2026-07-03
 
 ### Fixed
