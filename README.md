@@ -104,13 +104,14 @@ evals.)
 ## How it works
 
 ```
-tool_result string ──► wrap at 1928px-wide columns ──► pack ~92,000 chars/page ──► PNG[]
+tool_result string ──► wrap at 1568px-wide columns ──► pack ~28,000 chars/page ──► PNG[]
 ```
 
 The proxy intercepts `/v1/messages`, rewrites eligible bulk into image
 blocks, splices them back cache-friendly (static prefix preserved, prompt
-caching keeps working), and forwards. A 1928×1928 image costs ≈4,761 vision
-tokens and holds ≈92,000 chars, so text wins only above ~19 chars/token —
+caching keeps working), and forwards. Anthropic bills images by 28×28-px
+patches (⌈w/28⌉×⌈h/28⌉ visual tokens); a full 1568×728 page is 56×26 = 1,456
+tokens and holds ≈28,000 chars, so text wins only above ~19 chars/token —
 Claude Code traffic runs ~1.91 (N=391). A per-request estimator decides;
 sparse prose stays text. Events log to `~/.pxpipe/events.jsonl`.
 

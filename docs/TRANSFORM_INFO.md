@@ -15,10 +15,11 @@ to re-read that text in token form — Anthropic prompt-caches it, and image
 blocks OCR cleanly at small font sizes. So pxpipe pulls the static prefix
 out of the JSON body, renders it as one or more grayscale PNG image blocks,
 and pins a single `cache_control` breakpoint on the last image. Anthropic
-charges roughly `ceil(W*H/750)` tokens per image; a full static-slab page is
-1573×1280, so each slab tile costs ~2684 tokens regardless of how much text it
-carries. A 68K-token static slab collapses to ~3.5K image tokens on the first
-turn and to a cache-read (billed at 0.10×) on every subsequent turn. The
+charges `⌈W/28⌉×⌈H/28⌉` visual tokens per image (28-px patches); a full
+static-slab page is 1568×728, so each slab tile costs `56×26 = 1456` tokens
+regardless of how much text it carries. A large static slab collapses to a few
+such image pages on the first turn and to a cache-read (billed at 0.10×) on
+every subsequent turn. The
 trade is real text tokens for a few image tokens we cache once.
 
 ## 2. The static / dynamic split
@@ -138,9 +139,9 @@ offender (multiple KB of reusable-skill names and descriptions every single
 turn). These reminders are text inside `messages[]`, not inside the system
 prompt, so they do not hit the system+tools image cache.
 
-`compressReminders` (default `true`, threshold `minReminderChars=1000`) walks
+`compressReminders` (default `true`, threshold `minReminderChars=6000`) walks
 the first user message's content array, finds every text block that starts
-with `<system-reminder>` and is at least 1000 chars, and replaces it with
+with `<system-reminder>` and is at least 6000 chars, and replaces it with
 image blocks. Short reminders are left alone — below the threshold the image
 overhead would dominate. The replacement images carry **no `cache_control`**;
 they're per-turn savings on raw token cost, not cache reuse.
@@ -156,9 +157,9 @@ across the session. Once a tool result is produced its bytes are static —
 turn N+1 ships the same `tool_result` block as turn N, plus one more. Over a
 long session this compounds into tens of KB of text re-sent every turn.
 
-`compressToolResults` (default `true`, threshold `minToolResultChars=2000`)
+`compressToolResults` (default `true`, threshold `minToolResultChars=6000`)
 walks **all** user messages (not just the first), finds every `tool_result`
-block with content ≥ 2000 chars, and replaces the content with image blocks.
+block with content ≥ 6000 chars, and replaces the content with image blocks.
 The block's `content` may be either a string or an array of TextBlock /
 ImageBlock; the transform handles both shapes (see `src/core/transform.ts:573`
 onwards).
@@ -263,7 +264,7 @@ NOT compressed:
 
 ```
 text_tokens_we_removed = origChars / 4              # ~4 chars per token, rough
-image_tokens_we_added  = imageCount * 4761          # dense 1928×1928 ≈ 4761 tokens (slab ~2684)
+image_tokens_we_added  = imageCount * 1456          # a full 1568×728 page ≈ 56×26 = 1456 patch tokens
 extra_text_baseline    = max(0, text_tokens_we_removed - image_tokens_we_added)
 
 # cache_create dominates the first turn; bias the baseline toward 1.25 in

@@ -1,8 +1,8 @@
 /**
  * Text → PNG renderer. Blits atlas glyphs into a grayscale framebuffer, then PNG-encodes.
  * Iterates by codepoint so East Asian Wide chars (2-cell advance) and surrogate pairs handled correctly.
- * Pages capped at ~1932×1932 px: Fable/Opus 4.8 >20-image requests are held to ≤2000 px/side
- * (REJECTED if exceeded, not silently downscaled); ≤4784 token limit binds first at 1932 px.
+ * Pages capped at 1568×728 px (1.14 MP): under both Anthropic tiers' limits, so every
+ * page bills at its raw 28-px patch count with no server-side downscale (WYSIWYG).
  */
 
 import {
@@ -23,9 +23,11 @@ import {
 } from './atlas-gray.js';
 import { encodeGrayPng, encodeRgbPng } from './png.js';
 
-/** Page-height ceiling. Measured (2026-07-01, count_tokens sweep, claude-sonnet-4-5 — see
- *  /tmp/pxexp/LEVER1-findings.md): the API downscales any image to fit BOTH long-edge ≤1568
- *  AND ~1.15 MP (≈1,143,750 px), then bills ≈ px/750 (≈1525 tok cap, applied per-image).
+/** Page-height ceiling. Anthropic bills the exact 28-px patch count ⌈w/28⌉×⌈h/28⌉
+ *  (see anthropic-vision.ts): a 1568×728 page = 56×26 = 1456 visual tokens. The
+ *  2026-07-01 count_tokens sweep (claude-sonnet-4-5) measured the resize and a
+ *  ~px/750 slope (≈ the 28²=784 approximation): the API fits any image to BOTH a
+ *  ≤1568 long edge AND ~1.15 MP (≈1,143,750 px) before charging.
  *  The old 1932×1932 page was billed at cap but resampled 0.555× → 5×8 glyphs reached the
  *  encoder at ~2.8×4.4 px. New page shape 1568×728 = 1,141,504 px fits both bounds →
  *  WYSIWYG for the vision encoder (also satisfies ≤2000 px/side for >20-image requests). */
@@ -257,8 +259,9 @@ export function measureLineCols(line: string, markerScale: number = 1): number {
   return w;
 }
 
-/** Always renders at full canvas width. Signature kept for transform.ts compatibility; returns cols unchanged. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/** Shrinks `cols` to the widest actual line in `text` (never below it), so the
+ *  canvas width matches real content. Delegates to `measureContentCols`; the gate
+ *  and renderer both call this so their pixel cost agrees. */
 export function shrinkColsToContent(text: string, cols: number, markerScale: number = 1): number {
   // Real content-width measurement — delegates to measureContentCols (was historically a
   // no-op stub). The proxy's cost gate AND renderer both call this, so sizing the canvas to
@@ -738,7 +741,8 @@ export async function renderTextToPngs(
 
 const GUTTER_CELLS = 4;
 // Width hard-capped at the API's long-edge bound: anything wider is resampled server-side
-// (measured 2026-07-01: fit-within 1568-edge AND ~1.15 MP, then ≈px/750 billing).
+// (measured 2026-07-01: fit within a 1568 long edge AND ~1.15 MP; billed by the exact
+// 28-px patch count, ≈ the px/750 slope).
 const MAX_WIDTH_PX = 1568;
 
 const GUTTER_DIVIDER_INK = 64; // pre-invert → 191 post-invert: light gray column separator
