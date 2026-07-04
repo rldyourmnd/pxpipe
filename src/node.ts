@@ -176,9 +176,17 @@ Use with OpenAI-compatible GPT clients:
 `);
 }
 
+// Package version, inlined at bundle time by scripts/build.mjs via esbuild
+// `define`. Under a non-bundled dev runner (tsx) the identifier is not defined;
+// `typeof` returns "undefined" instead of throwing (ECMA-262 §13.5.3), so the
+// guard is safe. `npm_package_version` is only a dev fallback: npm sets it just
+// inside its own run-script env, so for `npx pxpipe-proxy` or a global bin it is
+// undefined (or reflects the *consumer's* package), never this tool's version.
+declare const __PXPIPE_VERSION__: string | undefined;
+
 function printVersion(): void {
-  // Filled in at bundle time by esbuild.define; falls back here.
-  console.log(process.env.npm_package_version ?? '0.2.0');
+  const injected = typeof __PXPIPE_VERSION__ === 'string' ? __PXPIPE_VERSION__ : undefined;
+  console.log(injected ?? process.env.npm_package_version ?? 'unknown');
 }
 
 // ---- node:http <-> Web Request/Response bridge ---------------------------
