@@ -1,2 +1,8 @@
 /cache
 /project.local.yml
+# Runtime sync markers — machine state, never durable knowledge.
+/.auto_sync_head
+/.serena_sync_state.json
+/.flow_sync_marker
+/.flow_post_task_state.json
+/.flow_blocker_ack.json
