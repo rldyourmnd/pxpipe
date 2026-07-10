@@ -22,6 +22,16 @@ This is what the model sees instead of text:
 tokens as this page. Real pipeline output; the model reads renders like this
 at 100/100 (see benchmarks).*
 
+![chart: characters a frontier context window holds, 2018–2026 — every vendor line tops out near the ~4M chars a 1M-token window holds as text; the same Fable 5 1M window through pxpipe images holds a measured ~18M chars, 4.6× the text ceiling](https://raw.githubusercontent.com/teamchong/pxpipe/main/docs/assets/context-window-chars.png)
+
+*Eight years of context growth, in characters. Every text line tops out near
+~4M chars (a 1M-token window at ~4 chars/token); the orange point is the
+**same Fable 5 1M window** read through pxpipe images — ~18M chars at the
+measured 18.3 chars/vision-token, **4.6×** the text ceiling. The density and
+multiplier are measured from a live render at generation time, not
+hand-typed: regenerate with `npx tsx scripts/gen-context-chart.ts`
+([source](scripts/gen-context-chart.ts)).*
+
 ## Demo
 
 **Fable 5 (the default, 100/100 reader) — plain left, pxpipe right:**
