@@ -21,9 +21,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createProxy } from '../src/core/proxy.js';
 
-// These proxy-contract tests deliberately exercise the opt-in Sol transform.
-// Snapshot the developer shell so the suite is deterministic now that Sol is
-// intentionally absent from the built-in default scope.
+// Pin the model scope so these proxy-contract tests stay independent of the developer shell.
 let ambientPxpipeModels: string | undefined;
 beforeAll(() => {
   ambientPxpipeModels = process.env.PXPIPE_MODELS;

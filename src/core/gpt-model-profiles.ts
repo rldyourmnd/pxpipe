@@ -104,11 +104,11 @@ export const DEFAULT_GPT_PROFILE: GptModelProfile = {
 
 const GPT56_SOL_PROFILE: GptModelProfile = {
   vision: { regime: 'patch', multiplier: 1, patchCap: 10000 },
-  stripCols: 126,
+  // Native 5×8 cells fit 152 columns at OpenAI's 768px short-side floor.
+  // Sol remains opt-in because broader recall is below the Fable bar.
+  stripCols: C,
   maxHeightPx: H,
-  // Separate atlas selected by model id. Cell remains within OpenAI's 768px
-  // short-side floor (126 cols x 6px + padding = 764px).
-  style: { ...BASE_STYLE, font: 'jetbrains-mono-10' },
+  style: { ...BASE_STYLE, font: 'spleen-5x8' },
 };
 
 interface ProfileRule {
@@ -176,14 +176,8 @@ const BUILTIN_RULES: ProfileRule[] = [
     },
   },
 
-  // Grok (Responses path). Opt-in only (not Fable-level pure-image). Profile:
-  // Best stable pure-image recipe from brute force: stock Spleen 5×8, white AA,
-  // no grid, maxHeight 512, width 152 (768 short-side floor), plus an in-image
-  // IDS block is applied on every model path (appendIdsBlock); Grok still
-  // needs white AA + short pages. White+ids_block: 7/7 full 4/4 on grok-4.5
-  // pure-image (no factsheet).
-  // paperGray 240 without grid confabulates ports; grid alone does not fix hex.
-  // Fact-sheet remains optional defense in depth.
+  // Grok remains opt-in. It shares the 5×8 production stack but uses shorter
+  // pages because its dense-image recall falls with taller strips.
   {
     test: (m) => /^grok-/.test(m),
     profile: {

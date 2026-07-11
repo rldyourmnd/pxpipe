@@ -23,8 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createProxy, type ProxyEvent } from '../src/core/proxy.js';
 import { countTokens as o200k } from 'gpt-tokenizer/encoding/o200k_base';
 
-// The GPT tests below drive 'gpt-5.6-sol', which is intentionally absent from
-// the built-in default scope (Fable 5 + Grok 4.5). Pin PXPIPE_MODELS so the suite is
+// The GPT tests below drive exact Sol. Pin PXPIPE_MODELS so the suite is
 // deterministic regardless of the developer's shell (same convention as
 // proxy-usage.test.ts) — without this, the file passes or fails depending on
 // ambient env, which is exactly what broke CI.
@@ -162,10 +161,10 @@ describe('savings math — GPT, cross-checked against the real o200k tokenizer',
 
   it('DECLINES A LOSER: refuses to image content where imaging would cost more than the real text', async () => {
     // Dense long-line slab: few o200k text tokens relative to vision pages.
-    // (The old 2k prose fixture is now profitable under Sol 6×11 packing — ~216
-    // image vs ~500 text tokens — so it no longer exercises the decline path.)
+    // Use enough low-token-density alphabet runs to remain a loser under the denser
+    // Sol 5×8 packing; the gate must still reject it.
     const sys = Array.from({ length: 80 }, (_, i) =>
-      `LINE${i} ` + 'abcdefghijklmnopqrstuvwxyz'.repeat(20),
+      `LINE${i} ` + 'abcdefghijklmnopqrstuvwxyz'.repeat(40),
     ).join('\n');
     const realTok = o200k(sys);
     const body = JSON.stringify({

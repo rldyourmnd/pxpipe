@@ -29,12 +29,10 @@ let runtimeModelBases: readonly string[] | null = null;
  *  - Opus 4.7/4.8 — worse at reading imaged content (FINDINGS.md 2026-06-16:
  *    Opus 4.8 ~2pp arithmetic, 6/15 dense-hex vs Fable 100/100).
  *  - GPT 5.5 — degrades on imaged history/context.
- *  - GPT 5.6 Sol — direct raw-image calls at both its 6×11 profile and the
- *    old shared 5×8 profile scored 0/4 exact with four confabulations. Its
- *    exact model profile remains available for explicit opt-in and retuning.
- *  - Grok 4.5 — packing + factsheet works for exact IDs, but pure-image is
- *    not Fable-level and the full quality suite is incomplete. Opt-in only
- *    until multi-seed + novel arithmetic clear a Fable-class bar.
+ *  - GPT 5.6 Sol — 98/100 production arithmetic, but 79/93 completed gist,
+ *    4/15 completed guard confabulations, and 0/15 dense hex.
+ *  - Grok 4.5 — 82/100 arithmetic, 83/98 gist, and 13/18 state tracking.
+ *  Both profiles remain available for explicit opt-in.
  *  Silently imaging weak or unvalidated readers is the wrong default. */
 const DEFAULT_MODEL_BASES = ['claude-fable-5'];
 

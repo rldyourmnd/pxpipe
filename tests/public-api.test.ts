@@ -83,6 +83,7 @@ describe('public library API', () => {
       // null clears the override → back to the Fable-only default
       setAllowedModelBases(null);
       expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true);
+      expect(isPxpipeSupportedGptModel('gpt-5.6-sol')).toBe(false);
       expect(isPxpipeSupportedGptModel('grok-4.5')).toBe(false);
       expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false);
     } finally {
@@ -90,7 +91,7 @@ describe('public library API', () => {
     }
   });
 
-  it('keeps GPT 5.6 Sol off by default but preserves exact opt-in aliases', () => {
+  it('keeps GPT 5.6 Sol aliases opt-in by default', () => {
     expect(isPxpipeSupportedGptModel('gpt-5')).toBe(false);
     expect(isPxpipeSupportedGptModel('gpt-5.5')).toBe(false);
     expect(isPxpipeSupportedGptModel('gpt-5.5-codex')).toBe(false);
@@ -110,9 +111,9 @@ describe('public library API', () => {
     expect(isPxpipeSupportedGptModel('gpt-5.6-terra')).toBe(false);
   });
 
-  it('keeps Grok and Sol opt-in only (off by default, like Opus)', () => {
-    // Grok packing + factsheet helps exact IDs, but pure-image is not Fable-
-    // level and the full quality suite is incomplete — opt-in only.
+  it('keeps Grok and Sol opt-in by default', () => {
+    // Grok remains opt-in because its arithmetic, gist, and state results are
+    // below the Fable bar.
     const prev = process.env.PXPIPE_MODELS;
     try {
       delete process.env.PXPIPE_MODELS;

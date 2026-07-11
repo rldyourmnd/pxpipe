@@ -931,8 +931,8 @@ describe('resolveGptProfile (Claude on Responses)', () => {
     ]) {
       const sol = resolveGptProfile(model);
       expect(sol.maxHeightPx, model).toBe(1932);
-      expect(sol.stripCols, model).toBe(126);
-      expect(sol.style.font, model).toBe('jetbrains-mono-10');
+      expect(sol.stripCols, model).toBe(152);
+      expect(sol.style.font, model).toBe('spleen-5x8');
     }
     for (const model of ['gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-terra[1m]']) {
       const notSol = resolveGptProfile(model);
