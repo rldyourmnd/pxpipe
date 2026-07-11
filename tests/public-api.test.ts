@@ -83,6 +83,7 @@ describe('public library API', () => {
       // null clears the override → back to the Fable-only default
       setAllowedModelBases(null);
       expect(isPxpipeSupportedModel('claude-fable-5')).toBe(true);
+      expect(isPxpipeSupportedGptModel('grok-4.5')).toBe(false);
       expect(isPxpipeSupportedModel('claude-opus-4-8')).toBe(false);
     } finally {
       setAllowedModelBases(null); // never leak the override into other tests
@@ -110,8 +111,8 @@ describe('public library API', () => {
   });
 
   it('keeps Grok and Sol opt-in only (off by default, like Opus)', () => {
-    // Pure-image exact OCR fails at production 5×8; do not image Grok unless
-    // the operator opts in via PXPIPE_MODELS or the dashboard chip.
+    // Grok packing + factsheet helps exact IDs, but pure-image is not Fable-
+    // level and the full quality suite is incomplete — opt-in only.
     const prev = process.env.PXPIPE_MODELS;
     try {
       delete process.env.PXPIPE_MODELS;
@@ -124,6 +125,7 @@ describe('public library API', () => {
       process.env.PXPIPE_MODELS = 'claude-fable-5,gpt-5.6-sol,grok-4.5';
       expect(isPxpipeSupportedGptModel('grok-4.5')).toBe(true);
       expect(isPxpipeSupportedGptModel('grok-4.5-fast')).toBe(true); // -suffix alias
+      expect(isPxpipeSupportedGptModel('gpt-5.6-sol')).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.PXPIPE_MODELS;
       else process.env.PXPIPE_MODELS = prev;

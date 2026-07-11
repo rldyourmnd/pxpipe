@@ -22,14 +22,15 @@ This is what the model sees instead of text:
 tokens as this page. Real pipeline output; the model reads renders like this
 at 100/100 (see benchmarks).*
 
-![chart: characters a frontier context window holds, 2018–2026 — every vendor line tops out near the ~4M chars a 1M-token window holds as text; the same Fable 5 1M window through pxpipe images holds a measured ~18M chars, 4.6× the text ceiling](https://raw.githubusercontent.com/teamchong/pxpipe/main/docs/assets/context-window-chars.png)
+![chart: characters a frontier context window holds, 2018–2026 — vendor text series including Grok 4.5; orange measured overlay is Fable 5 [1m] + pxpipe ~18M (4.6×)](docs/assets/context-window-chars.png)
 
 *Eight years of context growth, in characters. Every text line tops out near
-~4M chars (a 1M-token window at ~4 chars/token); the orange point is the
-**same Fable 5 1M window** read through pxpipe images — ~18M chars at the
-measured 18.3 chars/vision-token, **4.6×** the text ceiling. The density and
-multiplier are measured from a live render at generation time, not
-hand-typed: regenerate with `npx tsx scripts/gen-context-chart.ts`
+~4M chars (a 1M-token window at ~4 chars/token); **Grok 4.5** is shown as a
+text-window point only (500K). The orange overlay is the **same Fable 5 1M
+window** read through pxpipe images — ~18M chars at the measured Anthropic
+density (**4.6×** the text ceiling). Density is measured from a live render at
+generation time, not hand-typed: regenerate with
+`npx tsx scripts/gen-context-chart.ts`
 ([source](scripts/gen-context-chart.ts)).*
 
 ## Demo
@@ -93,14 +94,16 @@ are imaged.
   re-sends the full transcript as plain text each turn is in the same high-
   savings class as Claude Code. Details and measured splits:
   [docs/CACHING_AND_SAVINGS.md](docs/CACHING_AND_SAVINGS.md#openai-responses-path-codex-and-friends).
-- **Model scope:** default `PXPIPE_MODELS=claude-fable-5`. Sol, Opus 4.7/4.8,
-  GPT 5.5, and **Grok** are opt-in only (dashboard chips or `PXPIPE_MODELS`) —
-  not good enough as silent defaults for imaged context. The exact Sol id still
-  matters when opted in: sibling variants such as `gpt-5.6-terra` do not inherit
-  Sol's allowlist or render profile.
-  `PXPIPE_MODELS=off` disables imaging. Everything else passes through
-  byte-identical. On the GPT path, tool definitions stay native JSON and no
-  Anthropic `cache_control` markers are used.
+- **Model scope:** default `PXPIPE_MODELS=claude-fable-5`. Sol, Opus
+  4.7/4.8, GPT 5.5, and **Grok** are opt-in only (dashboard chips or
+  `PXPIPE_MODELS`) — not good enough as silent defaults for imaged context.
+  Grok packing + factsheet helps exact IDs, but pure-image is not Fable-
+  level and the full quality suite is incomplete. The exact Sol id still
+  matters when opted in: sibling variants such as `gpt-5.6-terra` do not
+  inherit Sol's allowlist or render profile. `PXPIPE_MODELS=off` disables
+  imaging. Everything else passes through byte-identical. On the GPT path,
+  tool definitions stay native JSON and no Anthropic `cache_control`
+  markers are used.
 - **Per-model rendering:** opt-in `gpt-5.6-sol` currently uses a 126-column,
   6×11 JetBrains Mono profile; Claude keeps its 312-column 5×8 Spleen profile. These
   are selected by exact model id, including history pages and profitability
@@ -111,31 +114,64 @@ are imaged.
   but not yet model-tested, so the current Sol geometry is operational—not
   recall-validated. [Sol receipts](eval/sol-profile/RESULTS.md) and
   [profile evidence](docs/MODEL_RENDER_PROFILES.md).
-- **Grok (opt-in): measured 9×12 + factsheet.** Off by default. Pure-image
-  exact OCR at 5×8 fails (0/4 IDs); the densest tested pure-image arm that
-  cleared 4/4 with zero confabulation was effective 9×12 / 84 columns at ~30%
-  fixture savings. The fact-sheet remains attached as defense in depth.
-  [eval/grok-density/FACTSHEET_RESULTS.md](eval/grok-density/FACTSHEET_RESULTS.md).
+- **Grok 4.5 (opt-in): 5×8 white + IDS + text factsheet.** Off by default
+  (not Fable-level pure-image). Production packing (Spleen 5×8, 152 cols,
+  maxH 512, AA white, no grid) plus in-image IDS and the **verbatim text
+  factsheet**. Live Codex-path matrix: pure-image alone fails exact; **image
+  + factsheet is 4/4** and multi-seed **3/3** full pass — still opt-in until
+  the full quality suite matches Fable. Enable with
+  `PXPIPE_MODELS=claude-fable-5,grok-4.5` or the dashboard chip.
+  [eval/grok-density/QUALITY_RESULTS.md](eval/grok-density/QUALITY_RESULTS.md).
 
 ## Benchmarks (reproducible)
 
-Measured with novel random-number problems the model cannot have memorized:
+### Model quality (does the model read the images?)
 
-| test | N | text | pxpipe (image) | tokens |
-|---|---:|---:|---:|---|
-| novel arithmetic, `claude-fable-5` | 100 | 100% | **100%** | **−38%** |
-| novel arithmetic, `claude-opus-4-8` | 100 | 100% | 93% | −38% |
-| gist recall A/B (decisions, values, paths, names, negations; with distractors; 15k-45k char sessions), Fable 5 | 98/arm | 98/98 | **98/98** | - |
-| state tracking (value mutated 3x, final/first/count), Fable 5 | 18/arm | 18/18 | **18/18** | - |
-| confabulation on never-stated facts (lower is better), Fable 5 | 16/arm | 0/16 | **0/16** | - |
-| verbatim 12-char hex recall, dense render, Opus | 15 | 15/15 | **0/15** | - |
-| verbatim 12-char hex recall, dense render, Fable 5 | 15 | - | **13/15** | - |
+Claude numbers are novel problems the model cannot have memorized. Grok’s
+shipped claim is the pure-image ID battery on the production 5×8 white+IDS
+profile (no factsheet).
+
+| test | model | N | text | pxpipe (image) | tokens |
+|---|---|---:|---:|---:|---|
+| novel arithmetic | `claude-fable-5` | 100 | 100% | **100%** | **−38%** |
+| novel arithmetic | `claude-opus-4-8` | 100 | 100% | 93% | −38% |
+| gist recall A/B (decisions, values, paths, names, negations; distractors; 15k–45k char sessions) | Fable 5 | 98/arm | 98/98 | **98/98** | - |
+| state tracking (value mutated 3×, final/first/count) | Fable 5 | 18/arm | 18/18 | **18/18** | - |
+| confabulation on never-stated facts (lower is better) | Fable 5 | 16/arm | 0/16 | **0/16** | - |
+| verbatim 12-char hex, dense render | Opus | 15 | 15/15 | **0/15** | - |
+| verbatim 12-char hex, dense render | Fable 5 | 15 | - | **13/15** | - |
+| ID battery (hex / camel / path / port), 5×8 white+IDS **+ factsheet** (production) | **`grok-4.5`** | 3 seeds | - | **3/3 full 4/4** (0 confab); pure-image alone fails live | - |
+
+Grok receipt:
+[`eval/grok-density/VISUAL_5X8_SOLUTION.md`](eval/grok-density/VISUAL_5X8_SOLUTION.md) ·
+[`five-by-eight-ids-block-white-stability.json`](eval/grok-density/five-by-eight-ids-block-white-stability.json).
+**Harness split:** Fable/Opus quality rows use **Claude**; Grok quality uses
+**Codex’s Responses provider** (`OPENAI_BASE_URL`, typically ocproxy) — see
+[`eval/grok-density/QUALITY_SUITE.md`](eval/grok-density/QUALITY_SUITE.md).
+Multi-seed IDs + factsheet (**3/3 pass**) and fix-matrix results are in
+[`QUALITY_RESULTS.md`](eval/grok-density/QUALITY_RESULTS.md). Novel arithmetic
+N=100 still open. Pure-image-only is **not** Fable-grade on live Grok.
+
+### Capacity / density (how many chars per vision-token?)
+
+Measured by rendering this repo’s dense fixture through the real pipeline and
+pricing pixels at each family’s vision rate. Multiplier = measured
+chars/vision-token ÷ 4 (prose text baseline). Not a model-quality score.
+
+| family | window | as text (@4 c/tok) | as pxpipe images | density | multiplier |
+|---|---:|---:|---:|---:|---:|
+| **`claude-fable-5[1m]`** (default) | 1M | ~4.0M | **~18.3M** | ~18.3 c/vt (px÷750) | **~4.6×** |
+| **`grok-4.5`** (opt-in; chart = text only) | 500K (xAI `maxPromptLength`) | ~2.0M | — | — | — |
+
+Regenerate: `npx tsx scripts/gen-context-chart.ts` · chart PNG
+[`docs/assets/context-window-chars.png`](docs/assets/context-window-chars.png).
 
 SWE-bench run totals, receipts, and caveats:
 [`eval/swe-bench/`](eval/swe-bench/) ·
 [`eval/swe-bench-pro/`](eval/swe-bench-pro/) ·
 [`eval/needle-haystack/`](eval/needle-haystack/) ·
-[`eval/gist-recall/`](eval/gist-recall/) · analysis in
+[`eval/gist-recall/`](eval/gist-recall/) ·
+[`eval/grok-density/`](eval/grok-density/) · analysis in
 [`FINDINGS.md`](FINDINGS.md). (GSM8K scored 96% imaged, but it's in training
 data — memorized answers survive misreads — so we lead with the novel-number
 evals.)
@@ -149,7 +185,8 @@ model id ──► render profile ──► wrap/reflow bulk context ──► P
 The proxy intercepts `/v1/messages`, rewrites eligible bulk into image
 blocks, splices them back cache-friendly (static prefix preserved, prompt
 caching keeps working), and forwards. Claude uses 1568×728 pages; GPT 5.6 Sol
-uses 764px-wide portrait strips; opt-in Grok uses effective 9×12 cells. A
+uses 764px-wide portrait strips; opt-in Grok 4.5 uses 152-col 5×8 strips
+(maxH 512) with white AA, an in-image IDS block, and a text factsheet. A
 per-request estimator uses that same resolved profile, so sparse prose stays
 text. Events log to `~/.pxpipe/events.jsonl`.
 
@@ -213,11 +250,12 @@ Three kinds of *input* blocks, each behind a profitability gate:
 Everything else passes through byte-identical: your messages, recent turns,
 the model's output (it is the response, the proxy never touches it), sparse
 prose, and anything too small to win. Models outside the allowlist pass
-through entirely — the built-in default scope is Fable 5 only. Sol, Opus 4.8,
-GPT 5.5, and Grok are deliberately opt-in via the dashboard or
+through entirely — the built-in default scope is Fable 5 only. Sol, Opus
+4.8, GPT 5.5, and Grok are deliberately opt-in via the dashboard or
 `PXPIPE_MODELS`, never silently imaged. Sol joined that list after both its
 6×11 profile and the old shared 5×8 profile scored 0/4 exact with four
-confabulations in direct raw-image calls.
+confabulations in direct raw-image calls. Grok stays opt-in: pure-image is
+not Fable-level and the full quality suite is incomplete.
 
 **Has it ever failed for real, outside the benchmarks?**
 Yes, once in weeks of daily use: the model recalled a person's name from

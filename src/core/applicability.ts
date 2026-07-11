@@ -32,9 +32,9 @@ let runtimeModelBases: readonly string[] | null = null;
  *  - GPT 5.6 Sol — direct raw-image calls at both its 6×11 profile and the
  *    old shared 5×8 profile scored 0/4 exact with four confabulations. Its
  *    exact model profile remains available for explicit opt-in and retuning.
- *  - Grok — shared 5×8 pure-image exact recall failed 0/4 with silent
- *    confabulation. Effective 9×12 and a factsheet each rescued one synthetic
- *    fixture, but neither has representative-workload evidence yet.
+ *  - Grok 4.5 — packing + factsheet works for exact IDs, but pure-image is
+ *    not Fable-level and the full quality suite is incomplete. Opt-in only
+ *    until multi-seed + novel arithmetic clear a Fable-class bar.
  *  Silently imaging weak or unvalidated readers is the wrong default. */
 const DEFAULT_MODEL_BASES = ['claude-fable-5'];
 

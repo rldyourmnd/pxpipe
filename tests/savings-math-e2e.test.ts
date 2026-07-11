@@ -24,7 +24,7 @@ import { createProxy, type ProxyEvent } from '../src/core/proxy.js';
 import { countTokens as o200k } from 'gpt-tokenizer/encoding/o200k_base';
 
 // The GPT tests below drive 'gpt-5.6-sol', which is intentionally absent from
-// the built-in default scope (Fable 5 only). Pin PXPIPE_MODELS so the suite is
+// the built-in default scope (Fable 5 + Grok 4.5). Pin PXPIPE_MODELS so the suite is
 // deterministic regardless of the developer's shell (same convention as
 // proxy-usage.test.ts) — without this, the file passes or fails depending on
 // ambient env, which is exactly what broke CI.
@@ -161,10 +161,21 @@ describe('savings math — GPT, cross-checked against the real o200k tokenizer',
   });
 
   it('DECLINES A LOSER: refuses to image content where imaging would cost more than the real text', async () => {
-    // 2000-char slab: ~374 real tokens, but it would render to a ~1400-token image.
-    const sys = slab(2_000);
+    // Dense long-line slab: few o200k text tokens relative to vision pages.
+    // (The old 2k prose fixture is now profitable under Sol 6×11 packing — ~216
+    // image vs ~500 text tokens — so it no longer exercises the decline path.)
+    const sys = Array.from({ length: 80 }, (_, i) =>
+      `LINE${i} ` + 'abcdefghijklmnopqrstuvwxyz'.repeat(20),
+    ).join('\n');
     const realTok = o200k(sys);
-    const { event, out } = await driveAndCapture('/v1/chat/completions', gptBody(2_000));
+    const body = JSON.stringify({
+      model: 'gpt-5.6-sol',
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: 'hello' },
+      ],
+    });
+    const { event, out } = await driveAndCapture('/v1/chat/completions', body);
     expect(event.info?.compressed).toBe(false);
     expect(event.info?.gateEval?.profitable).toBe(false);
     // The would-be image cost genuinely exceeds the real text cost → declining is correct.

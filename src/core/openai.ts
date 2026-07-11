@@ -24,6 +24,7 @@ import {
 import { bytesToBase64 } from './png.js';
 import {
   compactSlabWhitespace,
+  countVisualRows,
   estimateImageCount,
   sha8,
   ANTHROPIC_PIXELS_PER_TOKEN,
@@ -36,11 +37,12 @@ import {
   planGptCollapse,
   responsesItemsToTurns,
   chatMessagesToTurns,
+  GPT_HISTORY_DEFAULTS,
   type GptCollapsePlan,
   type GptHistoryOptions,
 } from './openai-history.js';
 import { HISTORY_SYNTHETIC_INTRO, HISTORY_SYNTHETIC_OUTRO } from './history.js';
-import { factSheetText } from './factsheet.js';
+import { appendIdsBlock, factSheetText } from './factsheet.js';
 import { countTokens as o200kCountTokens } from 'gpt-tokenizer/encoding/o200k_base';
 
 // Per-model GPT rendering + vision-cost profiles (portrait-strip width, image-token
@@ -253,6 +255,31 @@ function resolveOptions(opts: TransformOptions): OpenAIResolvedOptions {
   };
 }
 
+
+/** History-collapse options for both Chat and Responses. Profile geometry is
+ *  the single source of truth; Grok allows more pages because leftover plain
+ *  history is expensive on its pixel bill + weak cache discount. */
+function gptHistoryOpts(
+  model: string,
+  o: OpenAIResolvedOptions,
+  profile: ReturnType<typeof resolveGptProfile>,
+): Partial<GptHistoryOptions> {
+  return {
+    ...o.gptHistory,
+    reflow: o.reflow,
+    cols: o.gptHistory?.cols ?? profile.stripCols,
+    maxHeightPx: o.gptHistory?.maxHeightPx ?? profile.maxHeightPx,
+    style: o.gptHistory?.style ?? profile.style,
+    maxImages:
+      o.gptHistory?.maxImages ??
+      (isGrokModel(model) ? 24 : GPT_HISTORY_DEFAULTS.maxImages),
+    // IDS rows for pure-image exact recall (hex/camel/path/port on own lines).
+    // Default ON for every model — Grok brute-force 7/7 on white 5×8; Fable/Sol
+    // get the same visual isolation as defense in depth alongside the fact-sheet.
+    idsBlock: o.gptHistory?.idsBlock ?? true,
+  };
+}
+
 function emptyInfo(reason?: string): TransformInfo {
   return {
     compressed: false,
@@ -266,6 +293,13 @@ function emptyInfo(reason?: string): TransformInfo {
     dynamicBlockCount: 0,
     droppedChars: 0,
   };
+}
+
+/** Append IDS block so precision tokens get isolated pure-image rows (all models).
+ *  IDS alone is not enough for Grok exact recall on live multi-seed; production
+ *  still attaches factSheetText next to images (see slab/history below). */
+function prepareImagedRenderText(text: string): string {
+  return appendIdsBlock(text);
 }
 
 function maybeReflow(text: string, enabled: boolean): string {
@@ -497,7 +531,12 @@ function droppedCodepointsTop(droppedCodepoints: Map<number, number>): Record<st
   return out;
 }
 
-/** Shared gate: compute image vs text token cost and decide profitability. */
+/** Shared gate: image vs text token cost → profitability.
+ *
+ *  Text defaults to o200k (same baseline as savings math). Pass a non-default
+ *  `charsPerToken` to force the length/cpt lever (tests use 1). Images bill full
+ *  pages at maxHeight and the last page at residual height — charging every page
+ *  as a full strip over-states cost and blocks profitable collapses. */
 function evalOpenAIGate(
   model: string,
   renderedText: string,
@@ -514,6 +553,10 @@ function evalOpenAIGate(
     READABLE_CHARS_PER_IMAGE,
     Math.max(1, cols) * maxLines,
   );
+  const linesPerImage = Math.min(
+    maxLines,
+    Math.max(1, Math.floor(maxCharsPerImage / Math.max(1, cols))),
+  );
   const estImages = estimateImageCount(
     renderedText,
     cols,
@@ -521,9 +564,29 @@ function evalOpenAIGate(
     maxCharsPerImage,
     maxLines,
   );
-  const perFullStrip = visionTokensForModel(model, stripW, profile.maxHeightPx);
-  const imageTokens = estImages * perFullStrip;
-  const textTokens = renderedText.length / charsPerToken;
+  // Last page: residual soft-wrapped rows, not a full strip.
+  const visualRows = countVisualRows(renderedText, cols);
+  const lastPageLines = estImages <= 1
+    ? Math.min(linesPerImage, Math.max(1, visualRows))
+    : Math.min(
+        linesPerImage,
+        Math.max(1, visualRows - (estImages - 1) * linesPerImage),
+      );
+  const lastPageHeight = Math.min(
+    profile.maxHeightPx,
+    2 * PAD_Y + lastPageLines * cellH,
+  );
+  const fullPageTokens = visionTokensForModel(model, stripW, profile.maxHeightPx);
+  const lastPageTokens = visionTokensForModel(model, stripW, lastPageHeight);
+  const imageTokens =
+    estImages <= 1
+      ? lastPageTokens
+      : (estImages - 1) * fullPageTokens + lastPageTokens;
+  // Default: o200k. Non-default charsPerToken keeps the force/override lever.
+  const textTokens =
+    charsPerToken === DEFAULTS.charsPerToken
+      ? Math.max(1, gptTextTokens(renderedText) || Math.ceil(renderedText.length / charsPerToken))
+      : renderedText.length / Math.max(1e-6, charsPerToken);
   return { imageTokens, textTokens, profitable: imageTokens < textTokens };
 }
 
@@ -706,7 +769,7 @@ export async function transformOpenAIChatCompletions(
     ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.'
     : '';
   const header = CHAT_HEADER.replace('\n====', reflowNote + '\n====');
-  const renderedText = header + combined;
+  const renderedText = prepareImagedRenderText(header + combined);
   const profile = resolveGptProfile(req.model);
   const maxCols = o.cols ?? profile.stripCols;
   const cols = Math.min(
@@ -786,13 +849,12 @@ export async function transformOpenAIChatCompletions(
     const turns = chatMessagesToTurns(req.messages);
     const profitable = (text: string, cols: number) =>
       evalOpenAIGate(req.model, text, cols, o.charsPerToken).profitable;
-    const plan = await planGptCollapse(turns, firstUserIdx + 1, profitable, {
-      ...o.gptHistory,
-      reflow: o.reflow,
-      cols: o.gptHistory?.cols ?? profile.stripCols,
-      maxHeightPx: o.gptHistory?.maxHeightPx ?? profile.maxHeightPx,
-      style: o.gptHistory?.style ?? profile.style,
-    });
+    const plan = await planGptCollapse(
+      turns,
+      firstUserIdx + 1,
+      profitable,
+      gptHistoryOpts(req.model, o, profile),
+    );
     foldGptHistory(info, req.model, plan);
     const allImages = [...plan.images, ...plan.imagesAfter];
     if (allImages.length > 0) {
@@ -919,7 +981,7 @@ export async function transformOpenAIResponses(
     ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.'
     : '';
   const header = RESPONSES_HEADER.replace('\n====', reflowNote + '\n====');
-  const renderedText = header + combined;
+  const renderedText = prepareImagedRenderText(header + combined);
   const profile = resolveGptProfile(req.model);
   const maxCols = o.cols ?? profile.stripCols;
   const cols = Math.min(
@@ -1030,13 +1092,12 @@ export async function transformOpenAIResponses(
     const turns = responsesItemsToTurns(inputItems);
     const profitable = (text: string, cols: number) =>
       evalOpenAIGate(req.model, text, cols, o.charsPerToken).profitable;
-    const plan = await planGptCollapse(turns, firstUserIdx + 1, profitable, {
-      ...o.gptHistory,
-      reflow: o.reflow,
-      cols: o.gptHistory?.cols ?? profile.stripCols,
-      maxHeightPx: o.gptHistory?.maxHeightPx ?? profile.maxHeightPx,
-      style: o.gptHistory?.style ?? profile.style,
-    });
+    const plan = await planGptCollapse(
+      turns,
+      firstUserIdx + 1,
+      profitable,
+      gptHistoryOpts(req.model, o, profile),
+    );
     foldGptHistory(info, req.model, plan);
     const allImages = [...plan.images, ...plan.imagesAfter];
     if (allImages.length > 0) {

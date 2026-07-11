@@ -1,8 +1,9 @@
 /**
  * gen-context-chart.ts — README chart: how many *characters* a frontier context
- * window has held over time, GPT-1 (2018) → Fable 5 (2026), as a line chart on
- * a real year axis, with the pxpipe-imaged point measured live through the
- * render pipeline (no hardcoded density claims).
+ * window has held over time, GPT-1 (2018) → Fable 5 / Grok 4.5 (2026), as a
+ * line chart on a real year axis. One pxpipe overlay is measured live for
+ * Fable (the default reader); Grok appears as a plain text-window series only
+ * (opt-in, not Fable-level pure-image quality).
  *
  *   npx tsx scripts/gen-context-chart.ts
  *
@@ -12,10 +13,8 @@
  *  - Text points: window tokens × 4 chars/token (the standard English-prose
  *    rule of thumb; token-dense content like code/JSON tokenizes *worse*,
  *    ~2-2.5, so 4 is the generous assumption for the text series).
- *  - pxpipe point: window tokens × measured chars-per-vision-token, computed
- *    by rendering a representative dense fixture (this repo's own docs +
- *    source + JSON) through renderTextToImages and pricing pixels at the
- *    documented Anthropic rate of 750 px/token.
+ *  - Fable pxpipe point: window tokens × measured chars-per-vision-token via
+ *    Claude dense geometry + Anthropic 750 px/token pricing.
  *
  * Window sizes (announcement-era frontier defaults), with release dates used
  * for x-axis placement:
@@ -24,7 +23,7 @@
  *   8,192 base (Mar 2023) · Claude 2 100K (Jul 2023) · GPT-4 Turbo 128K (Nov
  *   2023) · Claude 2.1 200K (Nov 2023) · Gemini 1.5 Pro 1M (Feb 2024) ·
  *   GPT-4.1 1,047,576 (Apr 2025) · Fable 5 200K standard, 1M as
- *   claude-fable-5[1m] (2026).
+ *   claude-fable-5[1m] (2026) · Grok 4.5 500K (2026, xAI maxPromptLength).
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -38,15 +37,23 @@ const OUT = join(ROOT, 'docs/assets/context-window-chars.png');
 const TEXT_CPT = 4; // chars per text token, prose rule of thumb
 const PX_PER_VISION_TOKEN = 750; // Anthropic image pricing: tokens = w*h/750
 
+interface Density {
+  /** chars per vision-token for this family's render+billing profile */
+  cpt: number;
+  pages: number;
+  pixels: number;
+  visionTokens: number;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Measure chars-per-vision-token through the real pipeline.
 // ---------------------------------------------------------------------------
-async function measureDensity(): Promise<number> {
+function loadFixture(): string {
   // Representative token-dense context — the kinds of content pxpipe actually
   // images (markdown docs, TS source, JSON), taken from this repo itself.
   // Literal ↵ sentinels are stripped: these files *document* the sentinel, and
   // reflow() deliberately bails on source that already contains it.
-  const fixture = [
+  return [
     readFileSync(join(ROOT, 'README.md'), 'utf8'),
     readFileSync(join(ROOT, 'docs/CACHING_AND_SAVINGS.md'), 'utf8'),
     readFileSync(join(ROOT, 'src/core/library.ts'), 'utf8'),
@@ -54,19 +61,23 @@ async function measureDensity(): Promise<number> {
   ]
     .join('\n\n')
     .replaceAll('↵', '');
+}
 
+async function measureFableDensity(fixture: string): Promise<Density> {
+  // Claude dense geometry (default library path): 312-col Spleen, Anthropic height.
   const r = await renderTextToImages(fixture, { reflow: true });
   if (r.droppedChars > 0) {
-    throw new Error(`fixture dropped ${r.droppedChars} chars — atlas gap, fix before charting`);
+    throw new Error(`fable fixture dropped ${r.droppedChars} chars — atlas gap, fix before charting`);
   }
   const visionTokens = Math.ceil(r.pixels / PX_PER_VISION_TOKEN);
   const cpt = fixture.length / visionTokens;
   console.log(
-    `measured density: ${fixture.length} chars → ${r.pages.length} pages, ` +
+    `Fable density: ${fixture.length} chars → ${r.pages.length} pages, ` +
       `${r.pixels} px = ${visionTokens} vision tokens → ${cpt.toFixed(2)} chars/vision-token`,
   );
-  return cpt;
+  return { cpt, pages: r.pages.length, pixels: r.pixels, visionTokens };
 }
+
 
 // ---------------------------------------------------------------------------
 // 2. Data
@@ -80,15 +91,15 @@ interface Point {
   /** Model context window, in tokens. */
   tokens: number;
   chars: number;
-  /** Vendor series — each gets its own line. 'pxpipe' is the measured overlay point. */
-  kind: 'openai' | 'gemini' | 'claude' | 'pxpipe';
+  /** Vendor series — each gets its own line. 'pxpipe' is a measured overlay. */
+  kind: 'openai' | 'gemini' | 'claude' | 'grok' | 'pxpipe';
   /** Where to hang the label so the cluttered 2023 cluster stays readable. */
   label: LabelSide;
   /** Extra vertical label offset (px) — staggers the linear-scale floor pileup. */
   dy?: number;
 }
 
-function points(imageCpt: number): Point[] {
+function points(fableCpt: number): Point[] {
   const t = (
     kind: Point['kind'],
     name: string,
@@ -121,11 +132,14 @@ function points(imageCpt: number): Point[] {
     t('openai', 'GPT-5.6', 2026.52, 1_050_000, 'right'),
     // the model powering this session: claude-fable-5[1m], 1M-token window
     t('claude', 'Fable 5 [1m]', 2026.05, 1_000_000, 'below'),
+    // Grok 4.5: text-window only (opt-in; no pxpipe overlay on this chart).
+    // Window = xAI docs maxPromptLength for grok-4.5 (500000).
+    t('grok', 'Grok 4.5', 2026.42, 500_000, 'below', 10),
     {
       name: 'Fable 5 [1m] + pxpipe',
       x: 2026.05,
       tokens: 1_000_000,
-      chars: Math.round(1_000_000 * imageCpt),
+      chars: Math.round(1_000_000 * fableCpt),
       kind: 'pxpipe',
       label: 'above',
     },
@@ -152,7 +166,7 @@ const fmtTok = (t: number): string =>
 // ---------------------------------------------------------------------------
 // 3. Draw
 // ---------------------------------------------------------------------------
-function draw(data: Point[], imageCpt: number): Buffer {
+function draw(data: Point[], fableCpt: number): Buffer {
   const S = 2; // supersample for crisp README rendering
   const W = 1180 * S;
   const H = 1000 * S;
@@ -169,6 +183,7 @@ function draw(data: Point[], imageCpt: number): Buffer {
     openai: '#10a37f',
     gemini: '#a371f7',
     claude: '#58a6ff',
+    grok: '#e3b341',
     pxpipe: '#f0883e',
   };
 
@@ -183,7 +198,7 @@ function draw(data: Point[], imageCpt: number): Buffer {
   ctx.font = '400 14px sans-serif';
   ctx.fillText(
     `each point: model · context window (tokens) → characters it holds · text at ~${TEXT_CPT} chars/token · ` +
-      `pxpipe measured at ${imageCpt.toFixed(1)} chars/vision-token (px ÷ ${PX_PER_VISION_TOKEN})`,
+      `Fable pxpipe measured at ${fableCpt.toFixed(1)} chars/vision-token (px ÷ ${PX_PER_VISION_TOKEN})`,
     36,
     68,
   );
@@ -240,7 +255,7 @@ function draw(data: Point[], imageCpt: number): Buffer {
   ctx.fillText('release year', (left + right) / 2, 1000 - 40);
 
   // One line per vendor series (chronological within each series)
-  for (const vendor of ['openai', 'gemini', 'claude'] as const) {
+  for (const vendor of ['openai', 'gemini', 'claude', 'grok'] as const) {
     const pts = data.filter((p) => p.kind === vendor);
     ctx.strokeStyle = colors[vendor];
     ctx.lineWidth = 2;
@@ -252,45 +267,62 @@ function draw(data: Point[], imageCpt: number): Buffer {
     ctx.stroke();
   }
 
-  // Dashed connector: Fable 5 text → Fable 5 + pxpipe (same window, imaged)
-  const fable = data.find((p) => p.name === 'Fable 5 [1m]')!;
-  const px = data.find((p) => p.kind === 'pxpipe')!;
-  ctx.strokeStyle = colors.pxpipe;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([5, 4]);
-  ctx.beginPath();
-  ctx.moveTo(x(fable.x), y(fable.chars) - 7);
-  ctx.lineTo(x(px.x), y(px.chars) + 8);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.textAlign = 'left';
-  const annLine1 = `${(px.chars / fable.chars).toFixed(1)}×`;
-  const annLine2 = 'same window, imaged';
-  const annX = x(px.x) + 12;
-  const annY = (y(fable.chars) + y(px.chars)) / 2 + 4;
-  // bg-colored glyph halo so crossing lines never obscure the annotation;
-  // two short lines on the RIGHT of the connector — the left side now belongs
-  // to Gemini 2.5 Pro's label, and GPT-5.6's label sits well below these rows
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = bg;
-  ctx.lineWidth = 5;
-  ctx.font = '700 15px sans-serif';
-  ctx.strokeText(annLine1, annX, annY - 9);
-  ctx.fillStyle = colors.pxpipe;
-  ctx.fillText(annLine1, annX, annY - 9);
-  ctx.font = '600 12px sans-serif';
-  ctx.strokeText(annLine2, annX, annY + 9);
-  ctx.fillText(annLine2, annX, annY + 9);
+  // Dashed vertical connector: Fable text window → same window imaged (pxpipe).
+  // Grok is plotted as a text series only (no pxpipe overlay).
+  const overlays: Array<{ textName: string; pxName: string }> = [
+    { textName: 'Fable 5 [1m]', pxName: 'Fable 5 [1m] + pxpipe' },
+  ];
+  for (const o of overlays) {
+    const base = data.find((p) => p.name === o.textName)!;
+    const px = data.find((p) => p.name === o.pxName)!;
+    const cx = x(base.x); // same as x(px.x) — both points share the year
+    const y0 = y(base.chars) - 7;
+    const y1 = y(px.chars) + 8;
+    ctx.strokeStyle = colors.pxpipe;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx, y0);
+    ctx.lineTo(cx, y1);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.textAlign = 'left';
+    const annLine1 = `${(px.chars / base.chars).toFixed(1)}×`;
+    const annLine2 = 'same window, imaged';
+    const annX = cx + 12;
+    const annY = (y0 + y1) / 2 + 4;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = bg;
+    ctx.lineWidth = 5;
+    ctx.font = '700 15px sans-serif';
+    ctx.strokeText(annLine1, annX, annY - 9);
+    ctx.fillStyle = colors.pxpipe;
+    ctx.fillText(annLine1, annX, annY - 9);
+    ctx.font = '600 12px sans-serif';
+    ctx.strokeText(annLine2, annX, annY + 9);
+    ctx.fillText(annLine2, annX, annY + 9);
+  }
 
   // Points + labels
   for (const p of data) {
     const cx = x(p.x);
     const cy = y(p.chars);
-    const emphasized = p.kind === 'pxpipe' || p.name === 'Fable 5 [1m]';
+    const emphasized =
+      p.kind === 'pxpipe' ||
+      p.name === 'Fable 5 [1m]' ||
+      p.name === 'Grok 4.5';
     ctx.beginPath();
-    ctx.arc(cx, cy, emphasized ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.arc(cx, cy, emphasized ? 6.5 : 4.5, 0, Math.PI * 2);
     ctx.fillStyle = colors[p.kind];
     ctx.fill();
+    // Outer ring on pxpipe overlays so they read as measured, not vendor text.
+    if (p.kind === 'pxpipe') {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+      ctx.strokeStyle = colors.pxpipe;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
 
     const line1 = p.name;
     // no " tok" — the subtitle defines the pattern, and the ~4M band is crowded
@@ -341,6 +373,7 @@ function draw(data: Point[], imageCpt: number): Buffer {
     [colors.openai, `OpenAI · GPT — plain text @ ~${TEXT_CPT} chars/token`],
     [colors.gemini, 'Google · Gemini'],
     [colors.claude, 'Anthropic · Claude → Fable'],
+    [colors.grok, 'xAI · Grok 4.5'],
     [colors.pxpipe, 'Fable 5 [1m] · same 1M window · pxpipe images (measured)'],
   ];
   ctx.font = '400 13px sans-serif';
@@ -359,7 +392,7 @@ function draw(data: Point[], imageCpt: number): Buffer {
   ctx.fillStyle = '#484f58';
   ctx.font = '400 12px sans-serif';
   ctx.fillText(
-    `same ratio at any size: a standard 200K Fable 5 window × pxpipe ≈ ${fmt(Math.round(200_000 * imageCpt))} chars (vs 800K as text). Regenerate: npx tsx scripts/gen-context-chart.ts`,
+    `same ratio at any size: a standard 200K Fable 5 window × pxpipe ≈ ${fmt(Math.round(200_000 * fableCpt))} chars (vs 800K as text). Regenerate: npx tsx scripts/gen-context-chart.ts`,
     36,
     1000 - 14,
   );
@@ -368,8 +401,9 @@ function draw(data: Point[], imageCpt: number): Buffer {
 }
 
 // ---------------------------------------------------------------------------
-const imageCpt = await measureDensity();
-const data = points(imageCpt);
+const fixture = loadFixture();
+const fable = await measureFableDensity(fixture);
+const data = points(fable.cpt);
 
 console.log('\n  model                released   window (tokens)   chars in window');
 for (const p of data) {
@@ -377,12 +411,12 @@ for (const p of data) {
     `  ${p.name.padEnd(20)} ${String(Math.floor(p.x)).padEnd(10)} ${fmtTok(p.tokens).padStart(6)}            ${fmt(p.chars).padStart(6)}`,
   );
 }
-const fable = data.find((p) => p.name === 'Fable 5 [1m]')!;
-const px = data.find((p) => p.kind === 'pxpipe')!;
+const fableText = data.find((p) => p.name === 'Fable 5 [1m]')!;
+const fablePx = data.find((p) => p.name === 'Fable 5 [1m] + pxpipe')!;
 console.log(
-  `\n  pxpipe multiplier on the same window (any size): ${(px.chars / fable.chars).toFixed(2)}×`,
+  `\n  Fable pxpipe multiplier on the same window: ${(fablePx.chars / fableText.chars).toFixed(2)}×`,
 );
 
 mkdirSync(dirname(OUT), { recursive: true });
-writeFileSync(OUT, draw(data, imageCpt));
+writeFileSync(OUT, draw(data, fable.cpt));
 console.log(`\nwrote ${OUT}`);

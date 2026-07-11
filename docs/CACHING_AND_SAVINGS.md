@@ -259,10 +259,11 @@ Measured on local `/v1/responses` rows (same endpoint, different models):
 
 Render profiles are selected by exact model id, not by the shared Responses
 path. Opt-in `gpt-5.6-sol` uses 126 columns with a 6×11 JetBrains Mono atlas;
-Claude uses 312 columns with the 5×8 Spleen atlas. Grok remains opt-in and uses the
-densest tested exact-safe image arm, effective **9×12** / 84 columns, plus the
-factsheet. See [eval/grok-density/RESULTS.md](../eval/grok-density/RESULTS.md)
-and [FACTSHEET_RESULTS.md](../eval/grok-density/FACTSHEET_RESULTS.md).
+Claude uses 312 columns with the 5×8 Spleen atlas. Grok remains **opt-in** and
+uses **5×8** / 152 columns at maxHeight 512 with white AA (**no grid**) plus an
+in-image IDS block and the text factsheet (exact IDs). Pure-image alone is not
+Fable-level on live multi-seed. See
+[eval/grok-density/QUALITY_RESULTS.md](../eval/grok-density/QUALITY_RESULTS.md).
 
 Those profile and savings numbers are not recall evidence. The Sol raw-image
 pilot separately tested both 6×11/126 and old 5×8/152: each scored 0/4 exact

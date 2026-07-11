@@ -88,3 +88,14 @@ GROK_DENSITY_LIVE=1 node eval/grok-density/factsheet-vs-image.mjs
 ```
 
 See [FACTSHEET_RESULTS.md](./FACTSHEET_RESULTS.md).
+
+Pure-image 5×8 retune: [FIVE_BY_EIGHT_PURE_RESULTS.md](./FIVE_BY_EIGHT_PURE_RESULTS.md).
+
+## Full quality suite (Codex path)
+
+Multi-seed pure-image IDs + novel arithmetic (text vs image), scored over the
+same Responses endpoint Codex uses for Grok:
+
+See [`QUALITY_SUITE.md`](QUALITY_SUITE.md).
+
+Interim live numbers: [`QUALITY_RESULTS.md`](QUALITY_RESULTS.md).

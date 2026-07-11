@@ -10,7 +10,7 @@ geometry, glyph atlas, style, and vision billing from the exact `model` id.
 |---|:---:|---|---:|---:|---|---|
 | `claude-*` / `*anthropic*` | Fable only | Spleen + Unifont, 5×8 | 312 | 728 px | grayscale AA | Anthropic 1568-edge / ~1.15 MP no-resize measurements |
 | `gpt-5.6-sol` | **no; opt-in** | JetBrains Mono 10 + Unifont fallback, 6×11 | 126 | 1932 px | grayscale AA | operational geometry; raw recall pilot failed 0/4 exact and is being retuned |
-| `grok-*` | **no** | Spleen + Unifont, effective 9×12 | 84 | 1932 px | grayscale AA + factsheet | `grok-4.5` density climb: 4/4 exact, 0 confab, gist/guard pass, ~30% fixture savings |
+| `grok-*` | **no; opt-in** | Spleen + Unifont, 5×8 | 152 | 512 px | AA white + IDS + text factsheet | opt-in: pure-image not Fable-level; factsheet path works for exact IDs |
 | other GPT/o-series | no unless configured | Spleen + Unifont, 5×8 | 152 | 1932 px | grayscale AA | conservative fallback / existing OpenAI geometry |
 
 `gpt-5.6-sol` is intentionally exact and opt-in. The events log also contains
@@ -48,7 +48,7 @@ Receipt: [`eval/sol-profile/RESULTS.md`](../eval/sol-profile/RESULTS.md).
 
 ### Sol default-scope decision
 
-Sol is **off by default** under the same safety rule used for GPT 5.5 and Grok:
+Sol is **off by default** under the same safety rule used for GPT 5.5:
 a model that silently invents exact values from imaged context is not a safe
 transparent default. The profile code stays available so operators can opt in
 explicitly and so the 9×12 candidate can be evaluated without changing any
@@ -64,19 +64,25 @@ pass should replicate on both deterministic fixtures; the current n=1 failures
 are enough to reject these profiles, not enough to estimate a general error
 rate.
 
+## IDS block (all models)
+
+Every imaged path (Claude slab/history/tool_result, GPT slab/history, Grok)
+appends a short in-image **IDS** block so hex/camel/path/port sit on their own
+rows. This is the pure-image hex aid validated on Grok (7/7 4/4); other families
+get it as defense in depth alongside the text fact-sheet. Toggle off on the GPT
+history path with `gptHistory.idsBlock: false` if needed.
+
 ## Why Grok is opt-in
 
-Grok 4.5 at shared 5×8 density returned 0/4 exact identifiers and silently
-invented all four answers. Effective 9×12 returned 4/4 with zero confabulation,
-and a separate 5×8 + factsheet arm also returned 4/4 for the extractor shapes in
-that fixture. Both are n=1 synthetic results. They justify a safer opt-in
-profile, not silent default rewriting of every Grok request.
+Grok packing (5×8 white + IDS) plus the **text factsheet** clears exact-ID
+probes on the Codex path (live matrix + multi-seed 3/3). Pure-image alone
+does **not** — hex/port confabulate. The full Fable suite (novel arithmetic
+N=100, gist/state) is not complete for Grok. Until that bar is met, Grok stays
+**opt-in**: `PXPIPE_MODELS=claude-fable-5,grok-4.5` or the dashboard chip.
 
-Receipts:
-
-- [`eval/grok-density/RESULTS.md`](../eval/grok-density/RESULTS.md)
-- [`eval/grok-density/CLIMB_RESULTS.md`](../eval/grok-density/CLIMB_RESULTS.md)
-- [`eval/grok-density/FACTSHEET_RESULTS.md`](../eval/grok-density/FACTSHEET_RESULTS.md)
+Evidence:
+[`QUALITY_RESULTS.md`](../eval/grok-density/QUALITY_RESULTS.md),
+[`VISUAL_5X8_SOLUTION.md`](../eval/grok-density/VISUAL_5X8_SOLUTION.md).
 
 ## Overrides
 

@@ -189,6 +189,8 @@ describe('serveFragment', () => {
       expect(off).toContain('GPT 5.5</button>');
       // Sol remains available and ordered first, but neither GPT is silently on.
       expect(off.indexOf('GPT 5.6 Sol')).toBeLessThan(off.indexOf('GPT 5.5'));
+      expect(getAllowedModelBases()).toContain('claude-fable-5');
+      expect(getAllowedModelBases()).not.toContain('grok-4.5');
       expect(getAllowedModelBases()).not.toContain('gpt-5.6-sol');
       expect(getAllowedModelBases()).not.toContain('gpt-5.5');
 

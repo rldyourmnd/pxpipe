@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isPxpipeSupportedGptModel } from '../src/core/applicability.js';
-import { openAIVisionTokens, visionTokensForModel, isClaudeModel, resolveVisionCost, transformOpenAIChatCompletions, transformOpenAIResponses } from '../src/core/openai.js';
+import { openAIVisionTokens, visionTokensForModel, isClaudeModel, isGrokModel, resolveVisionCost, transformOpenAIChatCompletions, transformOpenAIResponses } from '../src/core/openai.js';
 import { resolveGptProfile } from '../src/core/gpt-model-profiles.js';
 
 const enc = new TextEncoder();
@@ -856,19 +856,23 @@ describe('resolveGptProfile (Claude on Responses)', () => {
 });
 
 describe('resolveGptProfile (Grok)', () => {
-  it('uses the measured opt-in 9x12 profile plus the fact-sheet', () => {
-    // Live climb 2026-07-09: 5x8 was 0/4 exact with four confabulations;
-    // effective 9x12 was the densest arm at 4/4 exact and zero confabulation.
+  it('uses pure-image 5x8 packing with shorter white pages under 768px short side', () => {
+    // 2026-07-11 pure-image 5x8: white AA + IDS block is the stable 4/4 recipe
+    // (7/7 retest). No grid; paperGray 240 confabulates ports. Width stays 768.
     const p = resolveGptProfile('grok-4.5');
-    expect(p.stripCols).toBe(84);
+    expect(p.stripCols).toBe(152);
+    expect(p.maxHeightPx).toBe(512);
     expect(p.style.font).toBe('spleen-5x8');
-    expect(p.style.cellWBonus).toBe(4);
-    expect(p.style.cellHBonus).toBe(4);
+    expect(p.style.cellWBonus).toBe(0);
+    expect(p.style.cellHBonus).toBe(0);
     expect(p.style.aa).toBe(true);
-    expect(resolveGptProfile('grok-4').stripCols).toBe(84);
+    expect(p.style.grid).toBe(false);
+    expect(p.style.gridCols).toBe(0);
+    expect(p.style.colorCycle).toBe(false);
+    expect(resolveGptProfile('grok-4').stripCols).toBe(152);
   });
 
-  it('renders the opt-in profile at 764px wide', async () => {
+  it('renders the opt-in profile at 768px wide (no short-side resize)', async () => {
     const body = enc.encode(JSON.stringify({
       model: 'grok-4.5',
       instructions: BIG_INSTRUCTIONS,
@@ -876,7 +880,9 @@ describe('resolveGptProfile (Grok)', () => {
     }));
     const result = await transformOpenAIResponses(body, { charsPerToken: 1, minCompressChars: 1 });
     expect(result.info.compressed).toBe(true);
-    expect(result.info.firstImageWidth).toBe(764);
+    // 152 cols × 5px + padding = 768px short-side floor.
+    expect(result.info.firstImageWidth).toBe(768);
+    expect(result.info.firstImageHeight ?? 0).toBeLessThanOrEqual(512);
   });
 });
 
@@ -921,6 +927,29 @@ describe('resolveGptProfile style overrides', () => {
   });
 });
 
+describe('Grok no-resize geometry', () => {
+  it('keeps rendered short side at or below 768px for slab and history packing', async () => {
+    const profile = resolveGptProfile('grok-4.5');
+    const cellW = 5 + (profile.style.cellWBonus ?? 0);
+    const stripW = 8 + profile.stripCols * cellW; // 2*PAD_X=8
+    expect(stripW).toBeLessThanOrEqual(768);
+    expect(profile.stripCols).toBe(152);
+    expect(cellW).toBe(5);
+    expect(profile.maxHeightPx).toBe(512);
+
+    // End-to-end: rendered PNG width matches the no-resize strip.
+    const body = enc.encode(JSON.stringify({
+      model: 'grok-4.5',
+      instructions: BIG_INSTRUCTIONS,
+      input: [{ role: 'user', content: 'hello' }],
+    }));
+    const result = await transformOpenAIResponses(body, { charsPerToken: 1, minCompressChars: 1 });
+    expect(result.info.firstImageWidth ?? 0).toBeLessThanOrEqual(768);
+    expect(result.info.firstImageWidth).toBe(768);
+    expect(result.info.firstImageHeight ?? 0).toBeLessThanOrEqual(512);
+  });
+});
+
 describe('visionTokensForModel (Grok)', () => {
   it('prices Grok images by measured megapixel rate, not GPT tiles', () => {
     // ceil(w*h/1e6 * 1000)
@@ -930,5 +959,59 @@ describe('visionTokensForModel (Grok)', () => {
     expect(visionTokensForModel('grok-4.5', 764, 980)).toBeLessThan(
       openAIVisionTokens('gpt-4o', 764, 980),
     );
+  });
+});
+
+describe('Grok history compression under default gate', () => {
+  it('collapses long Grok Responses history under default charsPerToken (o200k gate)', async () => {
+    // Production gate path: no charsPerToken override.
+    const items: Array<Record<string, unknown>> = [
+      { role: 'user', content: 'start the long autonomous run now please' },
+    ];
+    for (let i = 0; i < 40; i++) {
+      const id = `call_${i}`;
+      items.push({ role: 'assistant', content: `Working on step ${i}. `.repeat(40) });
+      items.push({ type: 'function_call', call_id: id, name: 'read', arguments: `{"path":"src/f${i}.ts"}` });
+      items.push({ type: 'function_call_output', call_id: id, output: (`result ${i} path=/tmp/out${i}.json `).repeat(60) });
+    }
+    const body = enc.encode(JSON.stringify({
+      model: 'grok-4.5',
+      instructions: 'You are a careful coding agent. '.repeat(200),
+      input: items,
+    }));
+    const result = await transformOpenAIResponses(body, { minCompressChars: 1 });
+    expect(result.info.compressed).toBe(true);
+    expect(result.info.historyReason).toBe('collapsed');
+    expect(result.info.collapsedImages ?? 0).toBeGreaterThan(0);
+    expect(result.info.imageTokens ?? 0).toBeLessThan(result.info.baselineImagedTokens ?? 0);
+  });
+
+  it('pages factsheet across long collapsed history so early exact ids survive', async () => {
+    const earlyHex = 'a3f9c1e0b7d2';
+    const items: Array<Record<string, unknown>> = [
+      { role: 'user', content: `remember ${earlyHex} and path src/core/anthropic-vision.ts port 47821` },
+    ];
+    // Long enough that a single-pass factsheet scan would miss the head.
+    for (let i = 0; i < 80; i++) {
+      const id = `call_${i}`;
+      items.push({ role: 'assistant', content: `Working on step ${i}. `.repeat(30) });
+      items.push({ type: 'function_call', call_id: id, name: 'read', arguments: `{"path":"src/f${i}.ts"}` });
+      items.push({
+        type: 'function_call_output',
+        call_id: id,
+        output: (`result ${i} blob=` + 'x'.repeat(400) + ' ').repeat(8),
+      });
+    }
+    const body = enc.encode(JSON.stringify({
+      model: 'grok-4.5',
+      instructions: 'Keep identifiers exact. '.repeat(100),
+      input: items,
+    }));
+    const result = await transformOpenAIResponses(body, { minCompressChars: 1 });
+    expect(result.info.historyReason).toBe('collapsed');
+    const out = JSON.parse(dec.decode(result.body)) as { input: Array<Record<string, unknown>> };
+    const serialized = JSON.stringify(out.input);
+    expect(serialized).toContain(earlyHex);
+    expect(serialized).toContain('47821');
   });
 });

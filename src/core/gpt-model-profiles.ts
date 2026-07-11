@@ -56,6 +56,8 @@ export interface GptRenderStyle {
   markerScale: number;
   /** Render hard-newline markers in red. */
   markerRed: boolean;
+  /** Pre-invert ink dilate radius (px). 0 = off. Thickens glyphs at fixed cell pitch. */
+  inkDilate: number;
 }
 
 export interface GptModelProfile {
@@ -86,6 +88,7 @@ const BASE_STYLE: GptRenderStyle = {
   colorCycle: false,
   markerScale: 1,
   markerRed: false,
+  inkDilate: 0,
 };
 
 /**
@@ -173,21 +176,28 @@ const BUILTIN_RULES: ProfileRule[] = [
     },
   },
 
-  // Grok (Responses path). Live climb 2026-07-09 on grok-4.5: 5x8 and 7x10
-  // confabulate exact IDs; effective 9x12 (Spleen 5x8 + 4px spacing) is the
-  // densest measured arm that reached 4/4 exact, 0 confab, gist+guard ok. The
-  // fact-sheet still rides beside images as defense in depth. Grok remains
-  // opt-in only; this profile applies only after an operator enables it.
+  // Grok (Responses path). Opt-in only (not Fable-level pure-image). Profile:
+  // Best stable pure-image recipe from brute force: stock Spleen 5×8, white AA,
+  // no grid, maxHeight 512, width 152 (768 short-side floor), plus an in-image
+  // IDS block is applied on every model path (appendIdsBlock); Grok still
+  // needs white AA + short pages. White+ids_block: 7/7 full 4/4 on grok-4.5
+  // pure-image (no factsheet).
+  // paperGray 240 without grid confabulates ports; grid alone does not fix hex.
+  // Fact-sheet remains optional defense in depth.
   {
     test: (m) => /^grok-/.test(m),
     profile: {
-      // Vision numbers here are unused for Grok: visionTokensForModel uses the
-      // measured pixel model. Keep a conservative tile placeholder for tools
-      // that only read the profile struct.
+      // Vision struct unused: visionTokensForModel prices Grok by pixels.
       vision: { regime: 'tile', base: 85, perTile: 170 },
-      stripCols: 84,
-      maxHeightPx: H,
-      style: { ...BASE_STYLE, cellWBonus: 4, cellHBonus: 4 },
+      // 152 cols × 5px + pad = 768px short-side floor.
+      stripCols: C,
+      maxHeightPx: 512,
+      style: {
+        ...BASE_STYLE,
+        aa: true,
+        grid: false,
+        gridCols: 0,
+      },
     },
   },
 ];
@@ -258,6 +268,7 @@ function parseEnvProfiles(raw: string): Map<string, GptModelProfile> {
       markerRed: styleIn && typeof styleIn.markerRed === 'boolean'
         ? styleIn.markerRed
         : baseStyle.markerRed,
+      inkDilate: nonNegativeInt(styleIn?.inkDilate, baseStyle.inkDilate),
     };
     out.set(key, {
       vision: isValidVision(p.vision) ? p.vision : base.vision,

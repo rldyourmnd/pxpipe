@@ -1548,6 +1548,30 @@ describe('transform', () => {
     expect(info.unknownStaticTags).toBeUndefined();
   });
 
+  it('does not flag nested skill-catalogue tags (name/description/location/skill)', async () => {
+    // Nested under <available_skills>; static for a session, churn still observed.
+    const sys =
+      'claude.md\n'.repeat(400) +
+      '<available_skills>\n' +
+      '<skill>\n' +
+      '<name>demo-skill</name>\n' +
+      '<description>Do the demo thing</description>\n' +
+      '<location>~/.claude/skills/demo/SKILL.md</location>\n' +
+      '</skill>\n' +
+      '</available_skills>\n' +
+      '<available_references>\nref-a\n</available_references>\n' +
+      '<env>\nWorking directory: /tmp\n</env>';
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        model: 'claude',
+        messages: [{ role: 'user', content: 'hi' }],
+        system: sys,
+      }),
+    );
+    const { info } = await transformRequest(body);
+    expect(info.unknownStaticTags).toBeUndefined();
+  });
+
   it('omits unknownStaticTags when the static slab has no tag-shaped blocks', async () => {
     const sys = 'claude.md\n'.repeat(400) + '<env>\nWorking directory: /tmp\n</env>';
     const body = new TextEncoder().encode(

@@ -24,10 +24,13 @@
 import {
   renderTextToPngs,
   reflow,
+
   neutralizeSentinel,
   type RenderedImage,
   type RenderStyle,
 } from './render.js';
+import { appendIdsBlock } from './factsheet.js';
+
 import { DEFAULT_GPT_PROFILE, GPT_MAX_HEIGHT_PX } from './gpt-model-profiles.js';
 import { countTokens as o200kCountTokens } from 'gpt-tokenizer/encoding/o200k_base';
 
@@ -100,6 +103,8 @@ export interface GptHistoryOptions {
    *  The returned `text` (o200k baseline + cache byte-stability) stays the
    *  ORIGINAL, un-reflowed transcript. */
   reflow: boolean;
+  /** Append IDS block for pure-image exact recall (isolated ID rows). Default on. */
+  idsBlock: boolean;
 }
 
 export const GPT_HISTORY_DEFAULTS: GptHistoryOptions = {
@@ -116,6 +121,7 @@ export const GPT_HISTORY_DEFAULTS: GptHistoryOptions = {
   style: DEFAULT_GPT_PROFILE.style,
   maxImages: GPT_HISTORY_MAX_IMAGES,
   reflow: true,
+  idsBlock: true,
 };
 
 /** One conversation item lowered to a renderable unit. */
@@ -307,7 +313,8 @@ export async function planGptCollapse(
   // show no ↵). `text` itself stays original — it backs the o200k baseline and
   // the chunk-snapped cache byte-stability, so it must not change shape here.
   const safeText = neutralizeSentinel(text);
-  const renderText = o.reflow ? reflow(safeText) ?? safeText : text;
+  let renderText = o.reflow ? reflow(safeText) ?? safeText : text;
+  if (o.idsBlock) renderText = appendIdsBlock(renderText);
   if (!isProfitable(renderText, o.cols)) {
     return { ...base, reason: 'not_profitable', collapsedChars: text.length };
   }
@@ -385,7 +392,8 @@ export async function planGptCollapse(
     const sectionText = joinTurns(turns, s, e, -1);
     if (!sectionText || sectionText.length === 0) continue;
     const safeSection = neutralizeSentinel(sectionText);
-    const sectionRender = o.reflow ? reflow(safeSection) ?? safeSection : sectionText;
+    let sectionRender = o.reflow ? reflow(safeSection) ?? safeSection : sectionText;
+    if (o.idsBlock) sectionRender = appendIdsBlock(sectionRender);
     // Readable portrait strips (≤768px wide) — legible to OpenAI vision, same as
     // the static slab. renderTextToPngs caps each PNG at MAX_HEIGHT_PX so a tall
     // section pages into N images, all still well under the 10,000-patch budget.
