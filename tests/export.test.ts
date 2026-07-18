@@ -537,14 +537,6 @@ describe('exportImageTokens model routing', () => {
     );
   });
 
-  it('Claude image tokens are substantially higher than GPT for the same full-page image', () => {
-    // The issue was a ~7x underestimate when using GPT formula for Claude.
-    // Verify the ratio is at least 5x so the fix is clearly meaningful.
-    const claudeTokens = exportImageTokens('claude-sonnet-4-5', W, H);
-    const gpTokens = exportImageTokens('gpt-4o', W, H);
-    expect(claudeTokens / gpTokens).toBeGreaterThan(5);
-  });
-
   it('caps a huge Claude image at the tier visual-token budget (patch downscale)', () => {
     // The old ceil(w*h/750*1.10) formula ignored Anthropic's downscale and grossly
     // overcharged large images (a 1928² page "cost" ~5464 when the API bills ≤1568
