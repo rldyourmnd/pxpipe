@@ -1,0 +1,47 @@
+schema_version: 1
+repository:
+  id: repo_01KZF6TN8EKQGCD8RGHESKACH6
+  display_name: pxpipe
+  roles:
+  - project
+  lifecycle: active
+provider:
+  type: github
+  installation: installation:github-personal
+  repository_id: 1327223869
+  owner: rldyourmnd
+  name: pxpipe
+classification:
+  portfolios:
+  - portfolio:forks
+  visibility_contract: public
+  data_classification: public
+policy:
+  profiles:
+  - repository-default
+  - fork-default
+  rollout_ring: standard
+git:
+  default_branch: main
+  integration: pull-request
+  branch_model: task-branches
+  handoff_pr: preferred
+  cleanup: merged-only
+fork:
+  upstream:
+    provider: github
+    repository_id: 1244617222
+    owner: teamchong
+    name: pxpipe
+  policy: maintained-patch
+  sync_branch: main
+  preserve_fork_commits: true
+  allow_force_sync: false
+agent:
+  context_profile: project-default
+  generated_agents: false
+  serena:
+    enabled: true
+    provenance_required: true
+release:
+  mode: none
